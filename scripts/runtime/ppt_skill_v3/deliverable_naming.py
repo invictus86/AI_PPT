@@ -59,17 +59,15 @@ def deliverable_topic(
     candidates: list[Any] = []
     if isinstance(script, dict):
         script_candidates = _script_topic_candidates(script)
-        candidates.extend(_numbered_topic_candidates(script_candidates, state, root.name))
         candidates.extend(script_candidates)
     content = _read_json(root / "_state" / "阶段1" / "content.json")
     content_candidates = _content_topic_candidates(content)
-    candidates.extend(_numbered_topic_candidates(content_candidates, state, root.name))
     candidates.extend(content_candidates)
     stage1_slides = _read_json(root / "_state" / "阶段1" / "slides.json")
     candidates.extend(_stage1_slide_topic_candidates(stage1_slides))
     if isinstance(state, dict):
-        candidates.append(state.get("project_name"))
-    candidates.append(root.name)
+        candidates.append(_project_topic_from_name(state.get("project_name")))
+    candidates.append(_project_topic_from_name(root.name))
 
     for candidate in candidates:
         topic = sanitize_deliverable_topic(candidate)
@@ -96,43 +94,11 @@ def sanitize_deliverable_topic(value: Any) -> str:
     return text
 
 
-def _numbered_topic_candidates(topics: list[Any], state: dict[str, Any] | None, root_name: str) -> list[str]:
-    code = _project_code_from_state(state, root_name)
-    if not code:
-        return []
-    candidates: list[str] = []
-    for topic_value in topics:
-        topic = sanitize_deliverable_topic(topic_value)
-        if not topic or _is_generic_topic(topic):
-            continue
-        topic_code = _project_code_from_name(topic)
-        if topic_code:
-            candidates.append(topic)
-        else:
-            candidates.append(sanitize_deliverable_topic(f"{code} {topic}"))
-    return candidates
-
-
-def _project_code_from_state(state: dict[str, Any] | None, root_name: str) -> str:
-    values: list[Any] = []
-    if isinstance(state, dict):
-        values.append(state.get("project_name"))
-    values.append(root_name)
-    for value in values:
-        code = _project_code_from_name(sanitize_deliverable_topic(value))
-        if code:
-            return code
-    return ""
-
-
-def _project_code_from_name(value: Any) -> str:
+def _project_topic_from_name(value: Any) -> str:
+    """Folder numbering is an organizational prefix, not a deliverable title."""
     text = sanitize_deliverable_topic(value)
-    if not text:
-        return ""
     match = _PROJECT_CODE_PREFIX.match(text)
-    if not match:
-        return ""
-    return sanitize_deliverable_topic(match.group(1))
+    return sanitize_deliverable_topic(match.group(2)) if match else text
 
 
 def existing_stage2_image_pdf_rel(run_dir: str | Path, state: dict[str, Any] | None = None) -> str | None:
