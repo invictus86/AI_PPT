@@ -4,4 +4,4 @@ The runtime package name is ppt_skill_v3. Current projects use explicit workflow
 Old project-state compatibility is not maintained.
 """
 
-__version__ = "1.3.3"
+__version__ = "1.3.4"
