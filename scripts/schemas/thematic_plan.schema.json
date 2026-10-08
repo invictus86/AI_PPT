@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_name",
+    "run_dir",
+    "theme",
+    "scene",
+    "school_stage",
+    "grade",
+    "duration_minutes",
+    "basis",
+    "applicability",
+    "activities",
+    "grade_adaptations",
+    "theme_analysis",
+    "audience_analysis",
+    "goals",
+    "key_points",
+    "difficult_points",
+    "preparation",
+    "follow_up",
+    "reflection_prompts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "thematic-1.0"
+    },
+    "scene": {
+      "enum": [
+        "class_meeting",
+        "parent_meeting"
+      ]
+    },
+    "school_stage": {
+      "enum": [
+        "primary",
+        "junior_high",
+        "senior_high"
+      ]
+    },
+    "duration_minutes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "activities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "purpose",
+          "duration_minutes",
+          "pages",
+          "teacher_actions",
+          "participant_actions",
+          "materials",
+          "output",
+          "assessment",
+          "possible_responses",
+          "followup_questions",
+          "fallback"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "pages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "slide_index",
+                "title"
+              ],
+              "properties": {
+                "slide_index": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "teacher_actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "participant_actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "materials": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "output": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "assessment": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "possible_responses": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "followup_questions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "fallback": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "grade_adaptations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "activity",
+          "scope",
+          "replacement",
+          "time_rule"
+        ]
+      }
+    },
+    "theme_analysis": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "audience_analysis": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "goals": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "key_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "difficult_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "preparation": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "follow_up": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reflection_prompts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "additionalProperties": true
+}

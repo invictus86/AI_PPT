@@ -1,0 +1,6 @@
+interface:
+  display_name: "精品班会与家长会PPT二创"
+  short_description: "深度增强主题班会与家长会内容，三步制作PDF与教案、逐字稿，另接教学动画"
+  default_prompt: "使用 $ppt-skill-v3，提炼原稿主题与有效框架，结合目标学段和真实使用场景深度增强内容，按三步流程制作精品图片版PDF、班会教案或会议实施方案及逐字稿；后续最终PPTX按需添加教学动画。全部生图文字来自阶段1逐页文字，转可编辑、Canva和动画保持文字不变。全程使用文件读取、API及后台渲染，不前台打开Office/WPS或放映；环境具备时生成并审阅全部点击状态，缺环境不验证并明确列出未验证范围，结构检查保留。"
+policy:
+  allow_implicit_invocation: true

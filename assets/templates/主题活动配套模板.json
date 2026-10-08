@@ -1,0 +1,55 @@
+{
+  "schema_version": "thematic-1.0",
+  "project_name": "",
+  "run_dir": "",
+  "theme": "",
+  "scene": "class_meeting",
+  "school_stage": "primary",
+  "grade": "通用版",
+  "duration_minutes": 40,
+  "basis": {
+    "locked_presentation_source": {
+      "source_mode": "stage2_image_deck",
+      "source_path": "",
+      "source_sha256": ""
+    }
+  },
+  "applicability": "",
+  "theme_analysis": [],
+  "audience_analysis": [],
+  "goals": [],
+  "key_points": [],
+  "difficult_points": [],
+  "preparation": [],
+  "follow_up": [],
+  "reflection_prompts": [],
+  "activities": [
+    {
+      "name": "",
+      "purpose": "",
+      "duration_minutes": 1,
+      "pages": [
+        {
+          "slide_index": 1,
+          "title": ""
+        }
+      ],
+      "teacher_actions": [],
+      "participant_actions": [],
+      "materials": [],
+      "output": [],
+      "assessment": [],
+      "possible_responses": [],
+      "followup_questions": [],
+      "fallback": []
+    }
+  ],
+  "grade_adaptations": [
+    {
+      "activity": "",
+      "scope": "",
+      "replacement": "",
+      "time_rule": ""
+    }
+  ]
+}

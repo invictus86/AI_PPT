@@ -1,0 +1,41 @@
+{
+  "controller_reviewed": false,
+  "status": "needs_rework",
+  "summary": "",
+  "reviewed_pages": [],
+  "checks": {
+    "theme_framework": {
+      "status": "fail",
+      "evidence": ""
+    },
+    "substantial_enhancement": {
+      "status": "fail",
+      "evidence": ""
+    },
+    "audience_and_grade_fit": {
+      "status": "fail",
+      "evidence": ""
+    },
+    "reasoning_and_values": {
+      "status": "fail",
+      "evidence": ""
+    },
+    "practical_activities": {
+      "status": "fail",
+      "evidence": ""
+    },
+    "transfer_and_reflection": {
+      "status": "fail",
+      "evidence": ""
+    },
+    "freshness_and_sources": {
+      "status": "fail",
+      "evidence": ""
+    },
+    "expression_and_visual_intent": {
+      "status": "fail",
+      "evidence": ""
+    }
+  },
+  "blocking_issues": []
+}

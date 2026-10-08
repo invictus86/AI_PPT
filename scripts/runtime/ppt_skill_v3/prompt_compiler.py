@@ -1,0 +1,87 @@
+"""Render only resolved visual instructions; page copy is never cleaned."""
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Any
+
+from .image_prompt_plan import check_instruction, unique, validate_image_prompt_plan
+from .prompt_rule_utils import rule_semantic_key
+from .validation import ValidationError
+
+
+def file_hash(path: str | Path) -> str:
+    return 'sha256:' + hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _page_number(policy: dict, visible: list[str], plan: dict, slide_index: int) -> str:
+    if not isinstance(policy, dict):
+        raise ValidationError('page_number_policy必须为对象')
+    enabled = policy.get('enabled') is True or policy.get('visible') is True
+    existing = plan.get('text_roles', {}).get('page_number')
+    if not enabled:
+        if existing is not None:
+            raise ValidationError('正文已有页码角色，但当前页码策略关闭，请主控对齐')
+        return '不显示页码。'
+    if existing is None:
+        raise ValidationError('页码也必须来自阶段1逐页文字，并由text_roles.page_number引用；禁止按页序创造文字')
+    if 'text' in policy and policy['text'] != visible[existing]:
+        raise ValidationError('批准页码文字与page_number_policy不一致')
+    label = '页面文字中指定的页码'
+    position = policy.get('position', '右下角')
+    style = policy.get('style', '')
+    if not isinstance(position, str) or not isinstance(style, str):
+        raise ValidationError('页码位置和样式必须为具体文字')
+    instruction = f'{position}显示{label}' + (f'，{style}' if style else '') + '。'
+    check_instruction(instruction, label='页码规则', allow_page_number=True)
+    return instruction
+
+
+def render_image_prompt(visible: list[str], plan: dict, page_number_policy: dict, slide_index: int, *, cover: bool = False) -> str:
+    if not isinstance(visible, list) or not visible or not all(isinstance(x, str) and x.strip() for x in visible):
+        raise ValidationError('正式生图必须有完整的批准页面文字')
+    validate_image_prompt_plan(plan, visible)
+    rows = ['生成一张横版中文PPT课件' + ('封面。' if cover else '页。'), '', '【画面文字】', '\n\n'.join(visible)]
+    role_names = {'title': '标题', 'subtitle': '副标题', 'module_index': '章节编号', 'module_title': '章节标题', 'module_subtitle': '章节说明', 'page_number': '页码文字'}
+    role_instructions = []
+    for index, text in enumerate(visible):
+        labels = [name for role, name in role_names.items() if plan['text_roles'].get(role) == index]
+        if labels:
+            role_instructions.append(f'第{index + 1}段作为' + '、'.join(labels))
+    emitted: set[str] = set()
+    def resolved(items: list[str]) -> list[str]:
+        result = []
+        for rule in items:
+            key = rule_semantic_key(rule)
+            if key not in emitted:
+                emitted.add(key)
+                result.append(rule)
+        return result
+
+    page_design = []
+    if role_instructions:
+        page_design.append('，'.join(role_instructions) + '，这些用途名称不出现在画面中')
+    page_design.extend(resolved(unique(plan['layout'])))
+    page_design.extend(resolved(unique(plan['visual'])))
+    page_design.extend(resolved([_page_number(page_number_policy, visible, plan, slide_index)]))
+    rows += ['', '【页面设计】', '；'.join(x.rstrip('。；; ') for x in page_design) + '。']
+
+    visual_style = resolved(unique(plan['style']))
+    rows += ['', '【视觉风格】', '；'.join(x.rstrip('。；; ') for x in visual_style) + '。']
+
+    constraints = resolved(unique(plan['constraints']))
+    constraints.append('画面全部文字仅来自给定的阶段1逐页文字，逐字保留标点、数字、单位和否定词；不增加标签、徽记、包装字或自动页码')
+    rows += ['', '【关键约束】', '；'.join(x.rstrip('。；; ') for x in constraints) + '。']
+    return '\n'.join(rows)
+
+
+def compile_stage2_prompt(*, content_slide: dict[str, Any], prompt_brief: dict[str, Any], deck_style: dict[str, Any], layout_intent: dict[str, Any], route: str, design_contract: dict[str, Any] | None = None, layout_safety_slide: dict[str, Any] | None = None, image_style: dict[str, Any] | None = None) -> str:
+    """Compatibility signature; only the controller's resolved plan is rendered.
+
+    Formal dispatch additionally validates its source basis with current_plan.
+    Raw deck/layout/safety prose cannot be appended at this stage.
+    """
+    visible = content_slide.get('final_visible_text')
+    if prompt_brief.get('final_visible_text') != visible:
+        raise ValidationError('final_visible_text与content不一致')
+    return render_image_prompt(visible, prompt_brief.get('image_prompt_plan'), deck_style.get('page_number_policy', {}), content_slide['slide_index'], cover=content_slide.get('page_type') == 'cover')

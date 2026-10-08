@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "controller_reviewed",
+    "status",
+    "summary",
+    "reviewed_pages",
+    "checks",
+    "blocking_issues"
+  ],
+  "properties": {
+    "controller_reviewed": {
+      "const": true
+    },
+    "status": {
+      "enum": [
+        "pass",
+        "needs_rework"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewed_pages": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "status",
+          "evidence"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "pass",
+              "fail"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "blocking_issues": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": true
+}

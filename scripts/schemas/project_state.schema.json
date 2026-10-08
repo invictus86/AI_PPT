@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PPT Skill v3 Project State",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project_name",
+    "run_dir",
+    "current_stage",
+    "status",
+    "required_actor",
+    "confirmed",
+    "user_artifacts",
+    "runtime_artifacts",
+    "updated_at",
+    "workflow",
+    "controller_acceptances",
+    "stage5_animation",
+    "thematic_brief"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2.0"
+    },
+    "project_name": {
+      "type": "string"
+    },
+    "run_dir": {
+      "type": "string"
+    },
+    "current_stage": {
+      "enum": [
+        "stage0",
+        "stage1",
+        "stage2",
+        "stage3",
+        "stage4",
+        "stage5"
+      ]
+    },
+    "status": {
+      "type": "string"
+    },
+    "required_actor": {
+      "enum": [
+        "main_controller",
+        "user",
+        "runtime",
+        "image_provider",
+        "none"
+      ]
+    },
+    "last_decision_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stage3_locked_presentation_source": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "stage3_outputs": {
+      "type": "object",
+      "properties": {
+        "speaker_script": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "lesson_plan": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "required_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "skip_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "stage4_deliverables": {
+      "type": "object",
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "organized_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "confirmed": {
+      "type": "object"
+    },
+    "user_artifacts": {
+      "type": "object"
+    },
+    "expected_user_paths": {
+      "type": "object"
+    },
+    "runtime_artifacts": {
+      "type": "object"
+    },
+    "quality": {
+      "type": "object"
+    },
+    "next_required_action": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "workflow": {
+      "type": "object",
+      "required": [
+        "mode",
+        "authorizations"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "three_step",
+            "animation_only"
+          ]
+        },
+        "authorizations": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "controller_acceptances": {
+      "type": "object",
+      "required": [
+        "stage1_plan",
+        "stage2_image_deck"
+      ],
+      "properties": {
+        "stage1_plan": {
+          "type": "boolean"
+        },
+        "stage2_image_deck": {
+          "type": "boolean"
+        }
+      }
+    },
+    "thematic_brief": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "stage5_animation": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not_started",
+            "waiting_valid_input",
+            "planning",
+            "plan_ready",
+            "executing",
+            "needs_manual_adjustment",
+            "waiting_background_review",
+            "waiting_font_review",
+            "verification_skipped",
+            "completed",
+            "failed"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
