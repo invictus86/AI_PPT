@@ -199,6 +199,7 @@ def do_sync(push=True):
         remote = git('rev-parse', '--verify', 'origin/' + BRANCH, check=False)
         if remote.returncode == 0:
             merge_remote()
+        check_index()
         ensure_dependencies()
         if push:
             print('正在上传本机版本；首次上传可能要求 GitHub 登录……')
