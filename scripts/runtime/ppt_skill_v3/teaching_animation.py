@@ -104,6 +104,11 @@ def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, 
         "font_handoff_pending_count": len(handoff['items']),
         "inspection": "_state/阶段5/inspection.json", "background_accepted": False,
         "execution_mode": "background_only"}
+    if state['workflow']['mode'] != 'animation_only' and any(
+            p['match_method'] == 'controller_reviewed_display_mapping' for p in verify_stage1_text(root,input_pptx)['pages']):
+        from .text_mapping_review import REVIEW
+        state['stage5_animation'].update({'text_mapping_review': REVIEW.as_posix(),
+            'text_mapping_review_sha256': file_sha256(root / REVIEW)})
     if state["workflow"]["mode"] == "animation_only":
         state.update({"status": "animation_active", "required_actor": "main_controller", "next_required_action": "规划当前输入版本的教学动画"})
     write_state(root, state)
@@ -114,6 +119,8 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
     root = Path(run_dir)
     state = read_state(root)
     task = state["stage5_animation"]
+    from .text_mapping_review import require_task_mapping
+    require_task_mapping(root, task)
     previous_status = task.get('status')
     if previous_status not in {"planning", "needs_manual_adjustment", "failed", "plan_ready", "verification_skipped"}:
         raise ValidationError("start inspection before recording the animation plan")
@@ -372,6 +379,8 @@ def execute_animation(run_dir: str | Path) -> dict[str, Any]:
     root = Path(run_dir)
     state = read_state(root)
     task = state["stage5_animation"]
+    from .text_mapping_review import require_task_mapping
+    require_task_mapping(root, task)
     if task.get("status") != "plan_ready":
         raise ValidationError("a reviewed plan with no unresolved manual issues is required")
     source = Path(task["input"])

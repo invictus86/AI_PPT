@@ -397,6 +397,10 @@ def build_parser() -> argparse.ArgumentParser:
     text_check = subparsers.add_parser('verify-stage1-text', help='Compare converted/exported PPTX editable text with exact stage1 page text; never rewrite it.')
     text_check.add_argument('--run-dir', required=True)
     text_check.add_argument('--input-pptx', required=True)
+    text_mapping = subparsers.add_parser('record-animation-text-mapping', help='Record evidence-bound reviewed Canva export paragraph/spacing/graphic mappings; never change slide text.')
+    text_mapping.add_argument('--run-dir', required=True)
+    text_mapping.add_argument('--input-pptx', required=True)
+    text_mapping.add_argument('--review', required=True)
     subparsers.add_parser('verification-capabilities', help='Inspect background verification dependencies without launching Office/WPS.')
     document_parser = subparsers.add_parser('render-document-background', help='Render real DOCX/PDF layout without foreground Office/WPS; no automatic QA pass.')
     document_parser.add_argument('--input', required=True)
@@ -445,6 +449,10 @@ def _execute(args, parser):
     if args.command == 'verify-stage1-text':
         from .text_preservation import verify_stage1_text
         print(json.dumps(verify_stage1_text(args.run_dir,args.input_pptx),ensure_ascii=False))
+        return 0
+    if args.command == 'record-animation-text-mapping':
+        from .text_mapping_review import record_mapping_review
+        print(json.dumps(record_mapping_review(args.run_dir,args.input_pptx,read_json(args.review)),ensure_ascii=False))
         return 0
     if args.command == 'resolve-canva-recovery':
         from .canva_task import resolve_canva_recovery

@@ -1,4 +1,4 @@
-# 阶段5：PPT教学动画与常见相近字体修复 · 1.3.6
+# 阶段5：PPT教学动画与常见相近字体修复 · 1.3.7
 
 用户明确请求并提供最终可编辑PPTX才启动。基础交付之后由用户手动转换，可选Canva修改；专项不重跑阶段0—4，不撤销基础完成事实。单独PPTX用`init --animation-only`；已有项目使用独立`stage5_animation`。
 
@@ -7,6 +7,8 @@
 ## 修改边界
 
 默认纯动画只改`p:timing`。已有基础项目开始动画前脚本用`verify-stage1-text`逐页核对可编辑文字，不符即停，不改写修复；独立动画保持原输入文字。标准提示词同时授权字体兼容检查与修复；该请求下运行`inspect-animation --repair-fonts`，用户已授权后无需逐句再确认。用户明确只改动画、未授权字体修复时不启用此开关，不改任何字体，只报告发现的问题。不能从“做动画”推断额外字体授权。
+
+Canva导出可能将完整句子拆成段落、用空格对齐、将箭头保留为图形，或把原插画中的独立问号转为文本。这些差异必须先实际对照原版同页图片及导出PPTX后台预览，不能自动忽略。用`record-animation-text-mapping --run-dir <项目> --input-pptx <文件> --review <JSON>`保存`_state/阶段5/editable_text_mapping_review.json`，然后重新核验。JSON含controller_reviewed、review_evidence、input_sha256、stage1_content_sha256及pages；每个差异页含slide_index、observation、reference_visual/export_visual及各自_sha256、units和decorations。units逐项覆盖批准正文按换行拆出的单位（authority_unit_index、expected_text、reason）；sources逐个写实际段落index/text，排版空格仅通过remove_spaces列明字符位置，跨段joins仅允许空串或显式已审阅箭头（graphic_connectors_reviewed=true）。decorations仅能登记原版同位置的独立问号/感叹号/勾号，写index/text/reason和original_decoration_confirmed=true。每个实际段落恰好使用一次，重组后须逐字等于批准文字。主控负责视觉判断，脚本只核对合同。禁止全局删除空格/标点、按字符计数放行、忽略新增文案或改课件来凑通过；输入、正文或图片变化后须重新审阅。
 
 字体修复分两种明确授权的模式：`compatibility`修复缺字、错误回退等实际显示异常；`reference_match`修复与原版字形风格不符的指定文字，包括Canva字体交接事项。兼容修复使用`--repair-fonts`；原版匹配另需用户明确授权并使用`--match-reference-fonts`（同时启用字体检查）。不能从仅兼容修复授权推断原版风格替换授权；纯动画保持全部字体。
 

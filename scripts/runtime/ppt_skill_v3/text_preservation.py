@@ -10,7 +10,7 @@ from .validation import ValidationError
 from .teaching_animation import slide_parts
 
 
-def verify_stage1_text(root, input_pptx):
+def verify_stage1_text(root, input_pptx, *, mapping_document=None):
     root=Path(root)
     source=Path(input_pptx).resolve()
     authority=root/'_state/阶段1/content.json'
@@ -20,6 +20,7 @@ def verify_stage1_text(root, input_pptx):
     if len(parts)!=len(slides):
         raise ValidationError('转换后页数与阶段1逐页文字不一致')
     pages=[]
+    mapping = None
     with ZipFile(source) as package:
         for slide,part in zip(slides,parts):
             tree=etree.fromstring(package.read(part))
@@ -38,8 +39,16 @@ def verify_stage1_text(root, input_pptx):
                                     for node in paragraph.iter() if node.tag in {a+'t', a+'br'})) if part != '']
                 expected_units = [part for item in slide['final_visible_text'] for part in re.split('[\n\v]', item) if part != '']
                 if Counter(actual_units) != Counter(expected_units):
-                    raise ValidationError(f"第{slide['slide_index']}页文字与阶段1不一致；停止字体/动画后续，不自动改写正文")
-                match_method = 'exact_paragraph_units_independent_of_shape_storage_order'
+                    from .text_mapping_review import load_mapping_review, check_mapped_page
+                    if mapping is None:
+                        mapping = load_mapping_review(root, source, authority, mapping_document)
+                    candidates = [p for p in mapping['pages'] if p['slide_index'] == slide['slide_index']] if mapping else []
+                    if len(candidates) != 1:
+                        raise ValidationError(f"第{slide['slide_index']}页文字与阶段1不一致；停止字体/动画后续，不自动改写正文")
+                    check_mapped_page(candidates[0], actual_units, expected_units)
+                    match_method = 'controller_reviewed_display_mapping'
+                else:
+                    match_method = 'exact_paragraph_units_independent_of_shape_storage_order'
             pages.append({'slide_index':slide['slide_index'],'editable_text_matches_stage1':True,'match_method':match_method})
     return {'status':'editable_text_matches_stage1','authority':str(authority),'authority_sha256':file_sha256(authority),
             'input':str(source),'input_sha256':file_sha256(source),'pages':pages,
