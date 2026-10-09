@@ -1,4 +1,4 @@
-"""Compare editable visible text with the sole stage1 per-page text authority."""
+"""Separate strict input/output text preservation from stage1 display equivalence."""
 from pathlib import Path
 from collections import Counter
 import re
@@ -75,4 +75,4 @@ def verify_stage1_text(root, input_pptx, *, mapping_document=None):
             pages.append({'slide_index':slide['slide_index'],'editable_text_matches_stage1':True,'match_method':match_method})
     return {'status':'editable_text_matches_stage1','authority':str(authority),'authority_sha256':file_sha256(authority),
             'input':str(source),'input_sha256':file_sha256(source),'pages':pages,
-            'scope':'可编辑文字逐字核对；XML对象存储顺序不同可按完全相同的段落及出现次数匹配。视觉阅读顺序、图片内烘焙字及外部图表文字仍需实际图片审阅，不据XML宣称这些项目通过。'}
+            'scope':'阶段1与导出PPTX的转换对照；可编辑文字精确匹配，正常分段、排版空格、图形箭头、装饰及填空横线可凭原版和当前同页图片登记显示等价映射。图形横线不要求成为可编辑文字，不回写输入；专项保全基准是最终输入PPTX，输入与成品仍独立逐字检查且不归一化。视觉阅读顺序、图片内烘焙字及外部图表文字仍需实际图片审阅，不据XML宣称这些项目通过。'}

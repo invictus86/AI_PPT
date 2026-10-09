@@ -81,8 +81,31 @@ def load_mapping_review(root, source, authority, document=None):
     return document
 
 
+def _editable_expected(unit, expected):
+    """Account for reviewed graphic fill lines without inserting slide text."""
+    spans = unit.get('graphic_spans', [])
+    _require(isinstance(spans, list), 'graphic_spans must be a list')
+    covered = set()
+    for span in spans:
+        _require(isinstance(span, dict) and span.get('kind') == 'fill_line',
+                 'only graphic fill lines are supported in graphic_spans')
+        start, end = span.get('start'), span.get('end')
+        _require(type(start) is int and type(end) is int and 0 <= start < end <= len(expected),
+                 'invalid graphic fill-line range')
+        text = expected[start:end]
+        _require(span.get('text') == text and len(text) >= 2 and set(text) <= {'_', '＿'},
+                 'graphic fill lines may account only for exact underscore placeholders')
+        _require(span.get('display_equivalent_confirmed') is True,
+                 'confirm the fill line in the original and current page images')
+        _reason(span)
+        positions = set(range(start, end))
+        _require(not covered.intersection(positions), 'overlapping graphic fill-line ranges')
+        covered.update(positions)
+    return ''.join(c for pos, c in enumerate(expected) if pos not in covered)
+
+
 def check_mapped_page(page, actual_units, expected_units):
-    """Every source/approved unit is consumed once; only declared spaces/arrows differ."""
+    """Consume every unit once; only evidence-bound display differences are allowed."""
     units = page.get('units')
     _require(isinstance(units, list) and len(units) == len(expected_units), 'map every approved unit')
     consumed, expected_seen = set(), set()
@@ -94,8 +117,10 @@ def check_mapped_page(page, actual_units, expected_units):
         expected_seen.add(i)
         _require(unit.get('expected_text') == expected_units[i], 'approved text differs')
         _reason(unit)
+        editable_expected = _editable_expected(unit, expected_units[i])
         sources = unit.get('sources')
-        _require(isinstance(sources, list) and bool(sources), 'needs exact source paragraphs')
+        _require(isinstance(sources, list) and (bool(sources) or editable_expected == ''),
+                 'needs exact source paragraphs unless the whole unit is a reviewed graphic fill line')
         chunks = []
         for src in sources:
             _require(isinstance(src, dict), 'source must be an object')
@@ -111,14 +136,14 @@ def check_mapped_page(page, actual_units, expected_units):
             _require(all(0 <= pos < len(text) and text[pos] in ' \t\u3000' for pos in spaces),
                      'only explicitly reviewed layout spaces may be removed')
             chunks.append(''.join(c for pos, c in enumerate(text) if pos not in spaces))
-        joins = unit.get('joins', [''] * (len(chunks) - 1))
-        _require(isinstance(joins, list) and len(joins) == len(chunks) - 1
+        joins = unit.get('joins', [''] * max(0, len(chunks) - 1))
+        _require(isinstance(joins, list) and len(joins) == max(0, len(chunks) - 1)
                  and all(isinstance(j, str) and (j == '' or j in CONNECTORS) for j in joins),
                  'joins may only be empty or an explicit graphic arrow')
         if any(joins):
             _require(unit.get('graphic_connectors_reviewed') is True, 'review graphic connectors')
-        reconstructed = chunks[0] + ''.join(j + c for j, c in zip(joins, chunks[1:]))
-        _require(reconstructed == expected_units[i], 'word, punctuation, number or spacing mismatch')
+        reconstructed = chunks[0] + ''.join(j + c for j, c in zip(joins, chunks[1:])) if chunks else ''
+        _require(reconstructed == editable_expected, 'word, punctuation, number or spacing mismatch')
     decorations = page.get('decorations', [])
     _require(isinstance(decorations, list), 'decorations must be a list')
     for item in decorations:
