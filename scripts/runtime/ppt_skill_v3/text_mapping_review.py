@@ -57,6 +57,27 @@ def load_mapping_review(root, source, authority, document=None):
         _reason(page, 'observation')
         _visual(root, page, 'reference_visual')
         _visual(root, page, 'export_visual')
+        canonical = root / f'阶段2_图片版PPT/img/slide_{n:03d}.png'
+        if canonical.is_file():
+            reference = Path(page['reference_visual'])
+            reference = reference if reference.is_absolute() else root / reference
+            _require(reference.resolve() == canonical.resolve(), 'reference must be the original same-page image')
+            export = Path(page['export_visual'])
+            export = export if export.is_absolute() else root / export
+            manifests = [export.parent / 'render_manifest.json', root / '_state/阶段5/preview_manifest.json']
+            matched = False
+            for path in manifests:
+                if not path.is_file():
+                    continue
+                manifest = read_json(path)
+                if manifest.get('input_sha256') != file_sha256(source):
+                    continue
+                for image in manifest.get('images', []):
+                    image_path = Path(image.get('path', ''))
+                    image_path = image_path if image_path.is_absolute() else root / image_path
+                    if image.get('page') == n and image_path.resolve() == export.resolve() and image.get('sha256') == page['export_visual_sha256']:
+                        matched = True
+            _require(matched, 'export visual must belong to a current input background render of this page')
     return document
 
 
@@ -87,7 +108,7 @@ def check_mapped_page(page, actual_units, expected_units):
             spaces = src.get('remove_spaces', [])
             _require(isinstance(spaces, list) and all(type(pos) is int for pos in spaces)
                      and len(spaces) == len(set(spaces)), 'invalid spacing positions')
-            _require(all(0 <= pos < len(text) and text[pos] in ' \t' for pos in spaces),
+            _require(all(0 <= pos < len(text) and text[pos] in ' \t\u3000' for pos in spaces),
                      'only explicitly reviewed layout spaces may be removed')
             chunks.append(''.join(c for pos, c in enumerate(text) if pos not in spaces))
         joins = unit.get('joins', [''] * (len(chunks) - 1))
@@ -123,9 +144,14 @@ def record_mapping_review(root, source, document):
 
 
 def require_task_mapping(root, task):
+    authority = task.get('approved_text_authority')
+    if authority:
+        _require(file_sha256(Path(root) / authority) == task.get('approved_text_authority_sha256'),
+                 'approved original text changed after inspection')
     path = task.get('text_mapping_review')
     if path:
         _require(file_sha256(Path(root) / path) == task.get('text_mapping_review_sha256'),
                  'mapping review changed after inspection')
+    if path or authority:
         from .text_preservation import verify_stage1_text
-        verify_stage1_text(root, task['input'])
+        return verify_stage1_text(root, task['input'])

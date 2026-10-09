@@ -172,16 +172,24 @@ def validate_handoff_resolutions(root, task, plan, inspection):
         if status not in {'replace', 'no_change'}:
             raise ValidationError('handoff resolution must be replace, no_change or blocked')
         page, shape = resolution.get('page'), resolution.get('shape_id')
-        objects = [o for p in inspection['pages'] if p['page'] == page
-                   for o in p['text_objects'] if o['shape_id'] == shape]
-        if len(objects) != 1 or normalized_text(item['text']) not in normalized_text(objects[0]['text']):
+        identities = resolution.get('shape_ids', [shape])
+        if not isinstance(identities, list) or not identities or any(type(i) is not int for i in identities) or len(set(identities)) != len(identities):
+            raise ValidationError('handoff needs distinct actual object identities in reviewed reading order')
+        if 'shape_ids' in resolution and 'shape_id' in resolution:
+            raise ValidationError('choose single-object or grouped handoff mapping')
+        lookup = {o['shape_id']: o for p in inspection['pages'] if p['page'] == page for o in p['text_objects']}
+        objects = [lookup[i] for i in identities if i in lookup]
+        if len(objects) != len(identities) or normalized_text(item['text']) not in normalized_text(''.join(o['text'] for o in objects)):
             raise ValidationError('handoff mapping does not match actual PPTX text')
         _text(resolution, 'mapping_reason')
         local_evidence(root, resolution.get('visual_evidence'))
         repairs = [r for r in plan.get('font_repairs', []) if r.get('handoff_id') == identity]
         if status == 'replace':
-            if len(repairs) != 1 or (repairs[0]['page'], repairs[0]['shape_id']) != (page, shape):
+            if len(repairs) != 1:
                 raise ValidationError('replacement needs exactly one mapped font repair')
+            repair_ids = [s['shape_id'] for s in repairs[0]['segments']] if 'segments' in repairs[0] else [repairs[0]['shape_id']]
+            if repairs[0]['page'] != page or repair_ids != identities:
+                raise ValidationError('replacement object ranges do not match handoff reading order')
             if normalized_text(repairs[0]['text']) != normalized_text(item['text']):
                 raise ValidationError('font repair must cover the handed-off complete text')
         elif repairs:

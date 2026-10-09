@@ -1,4 +1,4 @@
-# 阶段5：PPT教学动画与常见相近字体修复 · 1.3.7
+# 阶段5：PPT教学动画与常见相近字体修复 · 1.3.8
 
 用户明确请求并提供最终可编辑PPTX才启动。基础交付之后由用户手动转换，可选Canva修改；专项不重跑阶段0—4，不撤销基础完成事实。单独PPTX用`init --animation-only`；已有项目使用独立`stage5_animation`。
 
@@ -6,7 +6,9 @@
 
 ## 修改边界
 
-默认纯动画只改`p:timing`。已有基础项目开始动画前脚本用`verify-stage1-text`逐页核对可编辑文字，不符即停，不改写修复；独立动画保持原输入文字。标准提示词同时授权字体兼容检查与修复；该请求下运行`inspect-animation --repair-fonts`，用户已授权后无需逐句再确认。用户明确只改动画、未授权字体修复时不启用此开关，不改任何字体，只报告发现的问题。不能从“做动画”推断额外字体授权。
+**文字内容必须保持不变，修复前后必须与原版核对。** 原版核对同时包含批准正文及原版同页图片；专项输入PPTX与成品另逐页逐字比较，字、标点、数字、空格及显式换行均不得改变。禁止为兼容、匹配、消除检查错误或适配动画而改写、增删正文或修改content.json。
+
+默认纯动画只改`p:timing`。已有基础项目用`verify-stage1-text`核对原版批准正文。初检不匹配时`inspect-animation`仍保存只读对象检查及`initial_text_verification.json`的requires_original_comparison/verified=false，允许继续后台导出预览供诊断；主控自行完成同页原版对照及显示映射登记，无须因可恢复排版差异让用户改课件或再确认。计划登记、执行、最终验收须重新核验通过，真实错漏字不能进入执行。独立动画保持原输入文字。标准提示词同时授权字体兼容检查与修复；该请求下运行`inspect-animation --repair-fonts`，用户已授权后无需逐句再确认。用户明确只改动画、未授权字体修复时不启用此开关，不改任何字体，只报告发现的问题。不能从“做动画”推断额外字体授权。
 
 Canva导出可能将完整句子拆成段落、用空格对齐、将箭头保留为图形，或把原插画中的独立问号转为文本。这些差异必须先实际对照原版同页图片及导出PPTX后台预览，不能自动忽略。用`record-animation-text-mapping --run-dir <项目> --input-pptx <文件> --review <JSON>`保存`_state/阶段5/editable_text_mapping_review.json`，然后重新核验。JSON含controller_reviewed、review_evidence、input_sha256、stage1_content_sha256及pages；每个差异页含slide_index、observation、reference_visual/export_visual及各自_sha256、units和decorations。units逐项覆盖批准正文按换行拆出的单位（authority_unit_index、expected_text、reason）；sources逐个写实际段落index/text，排版空格仅通过remove_spaces列明字符位置，跨段joins仅允许空串或显式已审阅箭头（graphic_connectors_reviewed=true）。decorations仅能登记原版同位置的独立问号/感叹号/勾号，写index/text/reason和original_decoration_confirmed=true。每个实际段落恰好使用一次，重组后须逐字等于批准文字。主控负责视觉判断，脚本只核对合同。禁止全局删除空格/标点、按字符计数放行、忽略新增文案或改课件来凑通过；输入、正文或图片变化后须重新审阅。
 
@@ -16,7 +18,9 @@ Canva导出可能将完整句子拆成段落、用空格对齐、将箭头保留
 
 主控按同页原版的笔画、圆润程度、字面宽度、粗细与标题/正文层级比较候选，不由名字或宽度数值自动判相似。先用长标题、密集正文、特殊符号等代表页试修，在临时副本后台渲染，实际看图后记录样本证据。按异常整句话或完整标题处理，正常其他文字保留；禁止全稿替换或只修几个字留下混用。原本的装饰/手写风格不因特殊被视为异常；字体名称、bold元数据只作线索，正文不自动加粗。
 
-保留原文件、文字、字号、颜色、字距、段落/行距、位置、尺寸、布局、背景、媒体、关系、备注、页序、切换。不拆文本框、不遮挡、不重建对象。一个框含多句时只改异常句子；自动换行、软换行或跨段仍属于同一句时整句一起处理。可在原框内分割内部文字run以准确界定句子，复制全部原属性，不能分割字符做动画或改文字。跨对象的句子需列全关联范围，当前执行器不能安全处理的列人工阻断；图片内烘焙文字、动态字段或无法确定原字体意图的异常不自动改写。
+保留原文件、文字、字号、颜色、字距、段落/行距、位置、尺寸、布局、背景、媒体、关系、备注、页序、切换。不拆文本框、不遮挡、不重建对象。一个框含多句时只改异常句子；自动换行、软换行或跨段仍属于同一句时整句一起处理。可在原框内分割内部文字run以准确界定句子，复制全部原属性，不能分割字符做动画或改文字。跨对象完整句子/标题能够明确定位时登记segments修复组，列全关联范围及阅读顺序，不因跨框本身转人工；图片内烘焙文字、动态字段或无法确定完整范围/原字体意图的异常仍列阻断，不自动改写。
+
+显示映射只在匹配时允许按remove_spaces列明的ASCII空格、制表符或全角空格位置识别缩进，禁止全局清洗。基础项目reference_visual必须指向阶段2原版同页图片，export_visual须在当前输入同页后台渲染manifest中匹配页码、路径及SHA；箭头与装饰的判断须实际看原版及导出图，登记后继续原任务，绝不补写箭头字符、伪造图片观察或降低正文核验。
 
 成品直接保存到实际输入PPTX父目录：`<原名>_可编辑动画版.pptx`，同名递增`_v2`、`_v3`，不覆盖旧文件，不创建用户可见阶段5文件夹。所有预览、计划、差异和验收证据在项目内部`_state/阶段5/`。
 
@@ -30,13 +34,15 @@ Canva导出可能将完整句子拆成段落、用空格对齐、将箭头保留
 
 ### 字体清单契约
 
-plan顶层`font_repairs`为清单。每项记录实际`page`、`shape_id`、完整单元`unit_kind`（sentence/title）、`start`/`end`、逐字相同的`text`、`whole_unit_confirmed=true`、`boundary_reason`、`single_font_intent_evidence`、`reason`、`bold`（明确布尔）、`bold_reason`、`visual_evidence`（真实本地预览或详细观察记录）。新计划明确`mode`（compatibility/reference_match）、`target_font`（所选常见字体）、`candidate_fonts`、`non_premium=true`、`font_file`（本机实际已安装文件绝对路径）、`font_face_index`（集合索引，默认0）、`font_match_reason`、`sample_review_evidence`（已查看试修页面/观察记录）；原版匹配另需`reference_visual`。字体文件、样本、原版与诊断证据在登记和执行时绑定指纹；执行器核查常见家族、安装位置、字体内部家族名及完整字形覆盖。历史未标mode的窄范围微软雅黑计划保留原执行语义，不用于生成新的相近字体计划。
+plan顶层`font_repairs`为清单。单对象项记录实际`page`、`shape_id`、完整单元`unit_kind`（sentence/title）、`start`/`end`、逐字相同的`text`、`whole_unit_confirmed=true`、`boundary_reason`、`single_font_intent_evidence`、`reason`、`bold`（明确布尔）、`bold_reason`、`visual_evidence`（真实本地预览或详细观察记录）。新计划明确`mode`（compatibility/reference_match）、`target_font`（所选常见字体）、`candidate_fonts`、`non_premium=true`、`font_file`（本机实际已安装文件绝对路径）、`font_face_index`（集合索引，默认0）、`font_match_reason`、`sample_review_evidence`（已查看试修页面/观察记录）；两种模式均必需`reference_visual`，与原版同页实际比较，基础项目绑定阶段2同页图。字体文件、样本、原版与诊断证据在登记和执行时绑定指纹；执行器核查常见家族、安装位置、字体内部家族名及完整字形覆盖。历史未标mode的窄范围微软雅黑计划保留原执行语义，不用于生成新的相近字体计划。
+
+跨框项沿用上述证据/字体字段，将顶层shape_id/start/end/bold/bold_reason改为segments及mapping_reason。segments按主控实际看图确认的阅读顺序列出同页至少两个不同文本对象，每段仅含shape_id/start/end/text/bold/bold_reason；整组text须逐字等于各源范围原样串接，不插字、不删空格、不改变换行。中间段须覆盖完整对象，首尾范围只能在完整语义外边界截取；标题组覆盖每个完整标题对象。整组只用一种选定字体，每段粗体按原有标签/正文层级分别判断，不自动加粗正文；组内正常其他句子的原字体保留。所有段验证成功后在临时成品一次应用并整体核验，失败不交付半组修复文件。
 
 ### Canva字体交接
 
 inspect-animation自动读取项目内各Canva任务的font_handoff.json，核对正文和同页视觉指纹，在`_state/阶段5/font_handoff_import.json`记录页码、完整文字、候选PPTX对象及是否有歧义。记录候选不是确认映射；用户未授权原版匹配时只留待办，不执行该类替换。
 
-启用原版匹配后，plan需`font_handoff_resolutions`逐项覆盖全部handoff_id，status为replace/no_change/blocked，并写reason。replace/no_change需实际page、shape_id、mapping_reason与visual_evidence；replace对应且仅对应一条带同handoff_id的font_repairs，完整文字一致；no_change说明导出后已合格且不执行修复。拆分、合并、重复标题、图中文字或跨对象不能安全定位时记blocked及页面manual_issues，不按Canva对象ID猜测。全状态后台验收通过后生成`font_handoff_results.json`，明确仅修复PPTX、Canva在线设计未改变。正文、参考图、交接文件、PPTX或字体文件变化均需重新定位与审阅，不能复用旧映射或写成已通过。
+启用原版匹配后，plan需`font_handoff_resolutions`逐项覆盖全部handoff_id，status为replace/no_change/blocked，并写reason。replace/no_change需实际page、shape_id（单对象）或按实际阅读顺序排列的shape_ids（跨框组）、mapping_reason与visual_evidence；replace对应且仅对应一条带同handoff_id的font_repairs，完整文字及对象组顺序一致；no_change说明导出后已合格且不执行修复。能完整定位的跨框文字使用segments组继续，不要求用户合框。重复标题、图中文字或其他不能可靠定位的情况记blocked及页面manual_issues，不按Canva对象ID猜测。全状态后台验收通过后生成`font_handoff_results.json`，明确仅修复PPTX、Canva在线设计未改变。正文、参考图、交接文件、PPTX或字体文件变化均需重新定位与审阅，不能复用旧映射或写成已通过。
 
 偏移是源对象完整文字中的Unicode字符索引，左闭右开；段落之间为`\n`，显式软换行为`\v`，视觉自动换行不新增字符。标题覆盖完整标题对象；句子不切入语义内部，脚本边界保护不能代替主控整句判断。多句同run可以在原框内分run，正常句子的原字体及全部属性保留。所有计划以当前源文本定位，不以替换后文本回推。
 
@@ -44,11 +50,13 @@ inspect-animation自动读取项目内各Canva任务的font_handoff.json，核�
 
 `record-animation-plan --plan <文件>`后`apply-teaching-animation`。直接写入源包副本的p:timing；字体按授权清单准确修复，不调用Office写动画。失败标failed，基础完成事实保持。
 
-1. **文件差异核验**：逐包比较，允许计划内timing和整句字体/粗体；文字、正常句子、其余属性和包文件必须保持，unexpected_changes为空。
+1. **文件差异核验**：逐包比较，允许计划内timing和整句字体/粗体；独立literal_text_verification逐页确认原输入与成品的文字、空格、标点、数字、段落与显式换行完全不变，不使用显示映射或归一化放宽此项。原版批准文字及映射证据在计划、执行、最终验收再次核对；正常句子、其余属性和包文件必须保持，unexpected_changes为空。
 2. **成品时间轴核验**：读取最终成品的完整时间树，核对对象、触发、同步组、时长及题目/答案可见性契约。未知语义阻断；支持完整顶层对象短淡入、click及with_previous。
 3. **后台逐点击视觉核验**：`export-animation-states`生成每页初始及全部点击完成画面；临时状态PPTX中的未出现对象真实移除，仅用于后台渲染，正式成品不变。主控实际审阅全部图，检查题目/答案顺序、底图残影、图文同步、中文字体、粗细、断行、溢出、遮挡和最终完整性。纯动画最终画面还必须与当前原稿预览逐像素一致。
 
 主控使用`record-animation-background-review --review <文件>`登记全部状态；输入/输出/计划/manifest/状态图绑定指纹，具体契约见后台规范。method只能为background_click_states。启用字体检查时，此次逐状态审阅包含全页字体和排版，分别保留background_review与font_review；不能只检查修复页。
+
+新字体清单完成后，每一页最终状态还需original_comparison_observation，记录实际与原版同页/输入预览的文字、字形、粗细及排版比较。不能只确认文字数量或记录“看起来正常”；可恢复的映射或跨框差异由主控完成核对并继续，真实内容差异、证据不足、图片文字不可编辑及未解决视觉问题仍不得宣布专项完成。
 
 环境具备时，状态为waiting_background_review直到完整后台审阅通过，之后completed；缺环境按后台规范记录verification_skipped/background_accepted=false并交付已结构核验文件，不伪造审阅通过。不运行前台放映，不能伪称目标播放器实际放映已验证；后台状态只保证支持范围内的初始/点击完成画面和语义顺序。默认不改基础逐字稿；用户要求点击提示时另出对应版本。
 

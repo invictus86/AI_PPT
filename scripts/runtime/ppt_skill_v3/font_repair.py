@@ -145,9 +145,81 @@ def inspect_text_objects(tree):
     return objects
 
 
+def _expanded_repairs(repairs):
+    """Expand a reviewed semantic group into narrow existing-object ranges.
+
+    Group validation happens before expansion. No textbox or text is rebuilt.
+    Internal flags cannot be supplied by a plan to bypass boundary checks.
+    """
+    result = []
+    for repair in repairs:
+        if not isinstance(repair, dict) or any(k.startswith('_group_') for k in repair):
+            raise ValidationError('invalid font repair or reserved group flag')
+        if 'segments' not in repair:
+            result.append(repair)
+            continue
+        for segment in repair['segments']:
+            entry = {k: v for k, v in repair.items() if k not in {'segments', 'text', 'shape_id', 'start', 'end', 'bold', 'bold_reason'}}
+            entry.update(segment)
+            entry['_group_validated'] = True
+            result.append(entry)
+    return result
+
+
+def _validate_groups(source, parts, repairs):
+    with zipfile.ZipFile(source) as package:
+        for repair in repairs:
+            if not isinstance(repair, dict) or 'segments' not in repair:
+                continue
+            page, segments = repair.get('page'), repair.get('segments')
+            if type(page) is not int or not 1 <= page <= len(parts):
+                raise ValidationError('font group needs an actual page')
+            if not isinstance(segments, list) or len(segments) < 2:
+                raise ValidationError('cross-object group needs at least two complete linked ranges')
+            if repair.get('whole_unit_confirmed') is not True or repair.get('unit_kind') not in {'sentence', 'title'}:
+                raise ValidationError('confirm the complete cross-object sentence/title')
+            if not isinstance(repair.get('mapping_reason'), str) or not repair['mapping_reason'].strip():
+                raise ValidationError('cross-object group needs reviewed reading order and boundary evidence')
+            if any(k in repair for k in ('shape_id', 'start', 'end', 'bold')):
+                raise ValidationError('group ranges and visually judged bold belong to segments')
+            if repair.get('mode') not in {'compatibility', 'reference_match'}:
+                raise ValidationError('cross-object group requires an explicit authorized repair mode')
+            shapes = _shapes(etree.fromstring(package.read(parts[page - 1])))
+            consumed, chunks = set(), []
+            for index, segment in enumerate(segments):
+                if not isinstance(segment, dict) or set(segment) != {'shape_id', 'start', 'end', 'text', 'bold', 'bold_reason'}:
+                    raise ValidationError('group segment allows only an exact range and its bold decision')
+                identity = segment['shape_id']
+                if type(identity) is not int or identity not in shapes or identity in consumed:
+                    raise ValidationError('group needs distinct existing text objects on the same page')
+                consumed.add(identity)
+                text = _text(shapes[identity])
+                start, end = segment['start'], segment['end']
+                if type(start) is not int or type(end) is not int or not 0 <= start < end <= len(text):
+                    raise ValidationError('invalid group range')
+                if segment['text'] != text[start:end]:
+                    raise ValidationError('cross-object source text changed')
+                # Intermediate boundaries must consume the entire remainder/start
+                # of their objects. Only outer boundaries can end a sentence.
+                if index and start != 0 or index < len(segments)-1 and end != len(text):
+                    raise ValidationError('cross-object group leaves an interior fragment unaccounted')
+                endings = '。！？!?；;\n'
+                if repair['unit_kind'] == 'title':
+                    if start != 0 or end != len(text):
+                        raise ValidationError('cross-object title must cover every complete title object')
+                elif (index == 0 and start and text[start-1] not in endings or
+                      index == len(segments)-1 and end < len(text) and text[end-1] not in endings):
+                    raise ValidationError('cross-object group cuts inside an outer sentence')
+                chunks.append(segment['text'])
+            if not chunks or ''.join(chunks) != repair.get('text'):
+                raise ValidationError('cross-object whole text must equal exact ordered source fragments; no normalization or inserted copy')
+
+
 def validate_repairs(source: Path, parts: list[str], repairs: list[dict]) -> None:
     if not isinstance(repairs, list):
         raise ValidationError("font_repairs must be a list")
+    _validate_groups(source, parts, repairs)
+    repairs = _expanded_repairs(repairs)
     seen = {}
     with zipfile.ZipFile(source) as package:
         trees = {}
@@ -170,11 +242,11 @@ def validate_repairs(source: Path, parts: list[str], repairs: list[dict]) -> Non
                 raise ValidationError("font repair text no longer matches the source")
             if repair.get("unit_kind") not in {"sentence", "title"} or repair.get("whole_unit_confirmed") is not True:
                 raise ValidationError("repair the entire reviewed sentence/title, not isolated missing glyphs")
-            if repair["unit_kind"] == "title" and (start != 0 or end != len(text)):
+            if repair["unit_kind"] == "title" and not repair.get('_group_validated') and (start != 0 or end != len(text)):
                 raise ValidationError("a title repair must cover the complete title object")
             # Hard boundary guard catches character-only repairs. Paragraph boundaries
             # are candidates, not proof of a sentence; soft breaks never end a unit.
-            if repair["unit_kind"] == "sentence":
+            if repair["unit_kind"] == "sentence" and not repair.get('_group_validated'):
                 endings = "。！？!?；;\n"
                 if (start and text[start - 1] not in endings) or (end < len(text) and text[end - 1] not in endings):
                     raise ValidationError("range cuts inside a sentence; include all soft/wrapped lines")
@@ -200,8 +272,8 @@ def validate_repairs(source: Path, parts: list[str], repairs: list[dict]) -> Non
                 if repair['target_font'] not in candidates:
                     raise ValidationError('chosen reference font must be among reviewed candidates')
                 validate_reference_font(repair)
-            if mode == 'reference_match' and not isinstance(repair.get('reference_visual'), str):
-                raise ValidationError('reference matching needs original visual evidence')
+            if 'mode' in repair and (not isinstance(repair.get('reference_visual'), str) or not repair['reference_visual'].strip()):
+                raise ValidationError('font repair needs original same-page visual evidence in both modes')
             for node, _, offset, token in _tokens(shape):
                 if offset < end and offset + len(token) > start and node is not None and node.tag == A + "fld":
                     raise ValidationError("text fields need manual font repair; do not rebuild them")
@@ -232,7 +304,7 @@ def patch_font_tree(tree, repairs):
     """Keep boxes/paragraphs and all other run properties; split only internal runs."""
     shapes = _shapes(tree)
     by_shape = {}
-    for repair in repairs:
+    for repair in _expanded_repairs(repairs):
         by_shape.setdefault(repair["shape_id"], []).append(repair)
     for shape_id, units in by_shape.items():
         shape = shapes[shape_id]

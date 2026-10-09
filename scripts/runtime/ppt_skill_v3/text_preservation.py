@@ -10,6 +10,29 @@ from .validation import ValidationError
 from .teaching_animation import slide_parts
 
 
+def verify_source_text_unchanged(source, output):
+    """Check literal text and explicit breaks independently of font run splits.
+
+    No normalization: source spaces, punctuation, numbers, fields and paragraphs
+    stay exact. Full package comparison separately protects geometry and media.
+    """
+    parts = slide_parts(source)
+    if parts != slide_parts(output):
+        raise ValidationError('字体/动画修复改变了原稿页序')
+    a = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+    def units(data):
+        tree = etree.fromstring(data)
+        return [''.join('\v' if n.tag == a+'br' else (n.text or '')
+                        for n in p.iter() if n.tag in {a+'t', a+'br'}) for p in tree.iter(a+'p')]
+    with ZipFile(source) as before, ZipFile(output) as after:
+        for page, part in enumerate(parts, 1):
+            if units(before.read(part)) != units(after.read(part)):
+                raise ValidationError(f'第{page}页原稿文字、空格、标点或显式换行发生变化')
+    return {'verified': True, 'literal_source_text_unchanged': True,
+            'source_sha256': file_sha256(source), 'output_sha256': file_sha256(output),
+            'pages_checked': len(parts), 'normalization': 'none'}
+
+
 def verify_stage1_text(root, input_pptx, *, mapping_document=None):
     root=Path(root)
     source=Path(input_pptx).resolve()
