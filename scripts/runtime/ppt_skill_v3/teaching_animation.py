@@ -1,4 +1,4 @@
-"""Independent teaching animation with explicitly authorized font compatibility repair.
+"""Independent animation with authorized font/text optimization and content preservation.
 
 Timing is written and read directly from OOXML. Visual states are rendered with
 hidden document windows; no foreground slideshow is opened.
@@ -74,26 +74,28 @@ def inspect_pptx(path: str | Path) -> dict[str, Any]:
 
 
 def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, *, repair_fonts: bool = False,
-                    match_reference_fonts: bool = False) -> dict[str, Any]:
+                    match_reference_fonts: bool = False, optimize_text: bool = False) -> dict[str, Any]:
     root = Path(run_dir)
     state = read_state(root)
     text_verification = None
     if state['workflow']['mode'] != 'animation_only':
         from .text_preservation import verify_stage1_text
         try:
-            text_verification = verify_stage1_text(root,input_pptx)
+            text_verification = verify_stage1_text(root,input_pptx, collect_differences=optimize_text)
         except ValidationError as exc:
             # Inspection/rendering is read-only. Keep it available so the
             # controller can diagnose display mappings without editing copy.
-            # Plan registration and execution still require a passing check.
+            # Plans must resolve differences or explicitly keep affected pages pending.
             text_verification = {'status': 'requires_original_comparison', 'verified': False,
-                'reason': str(exc), 'action': '实际对照原版和后台预览；可恢复的显示差异登记映射，真实正文差异保持阻断，不改文字'}
+                'reason': str(exc), 'action': ('对照原版和预览；登记显示映射或有依据的转换还原，无法确定的正文页列待办，继续安全页'
+                    if optimize_text else '实际对照原版和后台预览；显示差异登记映射，正文变化保持阻断，遵守原窄范围授权')}
     from .validation import validate_project_state_relations
     validate_project_state_relations(state)
     if state["workflow"]["mode"] != "animation_only" and state.get("status") != "completed":
         raise ValidationError("finish base delivery before starting animation; standalone animation uses its own project")
     if not evidence.strip():
         raise ValidationError("actual human request for animation is required")
+    match_reference_fonts = match_reference_fonts or optimize_text
     info = inspect_pptx(input_pptx)
     source = Path(info["source_path"])
     target = root / "_state/阶段5"
@@ -107,6 +109,8 @@ def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, 
     state["stage5_animation"] = {"status": "planning", "input": info["source_path"],
         "input_sha256": info["source_sha256"], "authorization_evidence": evidence,
         "font_repair_enabled": repair_fonts, "font_review_accepted": not repair_fonts,
+        "text_optimization_enabled": optimize_text,
+        "text_optimization_authorization_evidence": evidence if optimize_text else None,
         "reference_font_matching_enabled": match_reference_fonts,
         "reference_font_authorization_evidence": evidence if match_reference_fonts else None,
         "font_handoff_import": "_state/阶段5/font_handoff_import.json",
@@ -122,7 +126,7 @@ def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, 
     if state['workflow']['mode'] != 'animation_only':
         state['stage5_animation'].update({'approved_text_authority': '_state/阶段1/content.json',
             'approved_text_authority_sha256': file_sha256(root / '_state/阶段1/content.json'),
-            'text_check_pending': text_verification.get('verified') is False})
+            'text_check_pending': text_verification.get('status') != 'editable_text_matches_stage1'})
     if state["workflow"]["mode"] == "animation_only":
         state.update({"status": "animation_active", "required_actor": "main_controller", "next_required_action": "规划当前输入版本的教学动画"})
     write_state(root, state)
@@ -135,13 +139,18 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
     root = Path(run_dir)
     state = read_state(root)
     task = state["stage5_animation"]
+    from .text_optimization import validate_optimizations
+    optimizations = plan.get('text_optimizations', [])
+    if optimizations and not task.get('text_optimization_enabled'):
+        raise ValidationError('轻微文字优化未授权；纯动画或原窄范围字体任务保持原限制')
+    validate_optimizations(task['input'], optimizations, root=root, bind=True)
     from .text_mapping_review import require_task_mapping
-    text_verification = require_task_mapping(root, task)
+    text_verification = require_task_mapping(root, task, optimizations)
     if text_verification:
         from .text_mapping_review import REVIEW
         if any(p['match_method'] == 'controller_reviewed_display_mapping' for p in text_verification['pages']):
             task.update(text_mapping_review=REVIEW.as_posix(), text_mapping_review_sha256=file_sha256(root / REVIEW))
-        task['text_check_pending'] = False
+        task['text_check_pending'] = text_verification.get('status') != 'editable_text_matches_stage1'
     previous_status = task.get('status')
     if previous_status not in {"planning", "needs_manual_adjustment", "failed", "plan_ready", "verification_skipped"}:
         raise ValidationError("start inspection before recording the animation plan")
@@ -212,6 +221,13 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
         if set(replace) - used:
             raise ValidationError("replacement targets need explicit replacement effects; do not erase arbitrary timing")
     repairs = plan.get("font_repairs", [])
+    pending = _validate_pending_text(root, task, plan, text_verification, bind=True)
+    if optimizations and visual_skipped:
+        raise ValidationError('没有实际页面诊断证据时保持文字呈现，记录未验证范围')
+    changed_text_objects = {(e['page'], e['shape_id']) for e in optimizations if e.get('after_text', e['before_text']) != e['before_text']}
+    from .font_repair import _expanded_repairs
+    if changed_text_objects.intersection((r['page'], r['shape_id']) for r in _expanded_repairs(repairs)):
+        raise ValidationError('先完成文字还原/断行并重新检查，再按新范围修字体；或在文字优化项中统一设置字体')
     if visual_skipped and repairs:
         raise ValidationError('without current PPTX visual verification preserve fonts and record unverified issues')
     validate_repairs(Path(task["input"]), slide_parts(task["input"]), repairs)
@@ -228,7 +244,8 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
                 raise ValidationError("each page needs an actual font observation")
         _bind_font_evidence(root, repairs, bind=True)
         _bind_font_evidence(root, plan.get('font_handoff_resolutions', []), bind=True)
-    result = {**plan, "font_repairs": repairs, "created_at": now_iso()}
+    result = {**plan, "font_repairs": repairs, "text_optimizations": optimizations,
+              "pending_text_issues": pending, "created_at": now_iso()}
     if visual_skipped:
         result['visual_evidence_status'] = 'skipped_no_environment'
         result['visual_verification_reason'] = preview['reason']
@@ -240,10 +257,35 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
     task["plan"] = "_state/阶段5/animation_plan.json"
     task["plan_sha256"] = file_sha256(root / task["plan"])
     task["preview_manifest_sha256"] = file_sha256(root / "_state/阶段5/preview_manifest.json")
+    task['pending_text_issues'] = pending
     if previous_status == 'verification_skipped' and state['workflow']['mode'] == 'animation_only':
         state.update(status='animation_active', required_actor='main_controller')
     write_state(root, state)
     return result
+
+
+def _validate_pending_text(root, task, plan, verification, *, bind):
+    """Permit other pages to continue while unresolved copy stays static and disclosed."""
+    from .text_optimization import _evidence
+    pending = plan.get('pending_text_issues', [])
+    if not isinstance(pending, list):
+        raise ValidationError('pending_text_issues must be a list')
+    required = {p['slide_index'] for p in (verification or {}).get('pages', []) if not p['editable_text_matches_stage1']}
+    if pending and not task.get('text_optimization_enabled'):
+        raise ValidationError('旧窄范围任务不能通过局部待办放宽正文检查')
+    if any(not isinstance(p, dict) for p in pending):
+        raise ValidationError('待处理正文项必须是对象')
+    if {p.get('page') for p in pending} != required or len(pending) != len(required):
+        raise ValidationError('逐页解决转换差异或明确列出全部待处理正文页，不能忽略内容错误')
+    for item in pending:
+        if item.get('status') != 'unresolved' or not isinstance(item.get('reason'), str) or not item['reason'].strip():
+            raise ValidationError('待处理正文页须记录未解决原因')
+        _evidence(Path(root), item, 'visual_evidence', bind)
+        page = next(s for s in plan['slides'] if s['page'] == item['page'])
+        if page['effects'] or page.get('replace_targets') or any(e['page'] == item['page'] for e in
+                plan.get('text_optimizations', []) + plan.get('font_repairs', [])):
+            raise ValidationError('未解决正文页保留输入原样，不改正文或执行新动画')
+    return pending
 
 
 def _bind_font_evidence(root: Path, repairs: list[dict], *, bind: bool) -> None:
@@ -342,18 +384,24 @@ def merge_timing(source: Path, animated: Path, output: Path, pages: set[int]) ->
             out.writestr(info, data)
 
 
-def verify_animation_only(source: Path, output: Path, pages: set[int], font_repairs: list[dict] | None = None) -> dict[str, Any]:
+def verify_animation_only(source: Path, output: Path, pages: set[int], font_repairs: list[dict] | None = None,
+                          text_optimizations: list[dict] | None = None, *, root=None) -> dict[str, Any]:
     from pptx import Presentation
     repairs = font_repairs if font_repairs is not None else []
     parts = slide_parts(source)
     validate_repairs(source, parts, repairs)
     from .text_preservation import verify_source_text_unchanged
-    text_check = verify_source_text_unchanged(source, output)
+    optimizations = text_optimizations or []
+    from .text_optimization import validate_optimizations, patch_text_tree
+    if optimizations:
+        validate_optimizations(source, optimizations, root=root)
+    text_check = verify_source_text_unchanged(source, output, text_optimizations=optimizations, root=root)
     timing_allowed = {parts[p - 1] for p in pages}
     fonts = {}
     for repair in repairs:
         fonts.setdefault(parts[repair["page"] - 1], []).append(repair)
-    allowed = timing_allowed | set(fonts)
+    text_changes = {parts[e['page'] - 1] for e in optimizations}
+    allowed = timing_allowed | set(fonts) | text_changes
     changed = []
     changed_fonts = []
     with zipfile.ZipFile(source) as a, zipfile.ZipFile(output) as b:
@@ -361,7 +409,7 @@ def verify_animation_only(source: Path, output: Path, pages: set[int], font_repa
             raise ValidationError("package entries/order changed")
         for name in a.namelist():
             before, after = a.read(name), b.read(name)
-            if before == after and name not in fonts:
+            if before == after and name not in fonts and name not in text_changes:
                 continue
             if name not in allowed:
                 raise ValidationError(f"non-animation package change: {name}")
@@ -369,6 +417,8 @@ def verify_animation_only(source: Path, output: Path, pages: set[int], font_repa
             if name in fonts:
                 patch_font_tree(roots[0], fonts[name])
                 changed_fonts.append(name)
+            if name in text_changes:
+                patch_text_tree(roots[0], [e for e in optimizations if parts[e['page'] - 1] == name])
             if name in timing_allowed:
                 original_timing = roots[0].find(f"{P}timing")
                 output_timing = roots[1].find(f"{P}timing")
@@ -388,6 +438,7 @@ def verify_animation_only(source: Path, output: Path, pages: set[int], font_repa
     if slide_parts(source) != slide_parts(output) or len(Presentation(output).slides) != len(slide_parts(source)):
         raise ValidationError("presentation order changed or final file is unreadable")
     return {"non_timing_changes": repairs, "allowed_font_changes": repairs,
+            "allowed_text_optimizations": optimizations,
             "literal_text_verification": text_check,
             "changed_font_parts": changed_fonts, "unexpected_changes": [],
             "changed_timing_parts": changed, "openable": True,
@@ -407,8 +458,17 @@ def execute_animation(run_dir: str | Path) -> dict[str, Any]:
     root = Path(run_dir)
     state = read_state(root)
     task = state["stage5_animation"]
+    if task.get("status") != "plan_ready":
+        raise ValidationError("a reviewed plan with no unresolved manual issues is required")
+    plan = read_json(root / task['plan'])
+    optimizations = plan.get('text_optimizations', [])
+    if optimizations and not task.get('text_optimization_enabled'):
+        raise ValidationError('文字优化未授权')
+    from .text_optimization import validate_optimizations, apply_text_optimizations
+    validate_optimizations(task['input'], optimizations, root=root)
     from .text_mapping_review import require_task_mapping
-    require_task_mapping(root, task)
+    verification = require_task_mapping(root, task, optimizations)
+    _validate_pending_text(root, task, plan, verification, bind=False)
     if task.get("status") != "plan_ready":
         raise ValidationError("a reviewed plan with no unresolved manual issues is required")
     source = Path(task["input"])
@@ -442,7 +502,11 @@ def execute_animation(run_dir: str | Path) -> dict[str, Any]:
                 repaired = temp / "font_repaired.pptx"
                 apply_font_repairs(source, merged, repaired, slide_parts(source), repairs)
                 merged = repaired
-            report = verify_animation_only(source, merged, pages, repairs)
+            if optimizations:
+                optimized = temp / 'text_optimized.pptx'
+                apply_text_optimizations(source, merged, optimized, optimizations, root=root)
+                merged = optimized
+            report = verify_animation_only(source, merged, pages, repairs, optimizations, root=root)
             check_visibility_rules(read_click_states(merged), plan)
             if file_sha256(source) != task["input_sha256"]:
                 raise ValidationError("source changed during animation execution")
@@ -457,6 +521,8 @@ def execute_animation(run_dir: str | Path) -> dict[str, Any]:
                        "font_review_accepted": not task.get("font_repair_enabled", False),
                        "plan_sha256": task["plan_sha256"], "background_accepted": False,
                        "execution_mode": "background_only", "created_at": now_iso()})
+        report['pending_text_issues'] = plan.get('pending_text_issues', [])
+        report['text_content_accepted'] = not report['pending_text_issues']
         write_json(root / "_state/阶段5/file_verification.json", report)
         task.update({"status": "waiting_background_review", "output": str(output),
                      "background_accepted": False,
@@ -477,7 +543,9 @@ def accept_slideshow_review(run_dir: str | Path, review: dict[str, Any]) -> dict
 def validate_background_review(root: Path, task: dict[str, Any], review: dict[str, Any]) -> dict[str, Any]:
     from .background_ppt import read_click_states, check_visibility_rules, PROFILE, RENDERER
     from .text_mapping_review import require_task_mapping
-    require_task_mapping(root, task)
+    reviewed_plan = read_json(root / task['plan'])
+    verification = require_task_mapping(root, task, reviewed_plan.get('text_optimizations', []))
+    _validate_pending_text(root, task, reviewed_plan, verification, bind=False)
     if review.get("method") != "background_click_states" or review.get("controller_reviewed") is not True:
         raise ValidationError("background_click_states controller review is required")
     for key, path in (("input_sha256", Path(task["input"])), ("output_sha256", Path(task["output"])), ("plan_sha256", root/task["plan"])):
@@ -504,7 +572,8 @@ def validate_background_review(root: Path, task: dict[str, Any], review: dict[st
     plan = read_json(root/task["plan"])
     check_visibility_rules(actual, plan)
     verify_animation_only(Path(task["input"]),Path(task["output"]),
-        {s["page"] for s in plan["slides"] if s["effects"] or s.get("replace_targets")},plan.get("font_repairs",[]))
+        {s["page"] for s in plan["slides"] if s["effects"] or s.get("replace_targets")},plan.get("font_repairs",[]),
+        plan.get('text_optimizations', []), root=root)
     if actual != manifest.get("pages"):
         raise ValidationError("background states do not match the final PPTX timing")
     expected = {(p["page"],s["step"]):s for p in actual for s in p["states"]}
@@ -536,6 +605,9 @@ def validate_background_review(root: Path, task: dict[str, Any], review: dict[st
         if obs['step'] == max(s['step'] for p in actual if p['page'] == obs['page'] for s in p['states']) and any('mode' in r for r in plan.get('font_repairs', [])):
             if not isinstance(obs.get('original_comparison_observation'), str) or not obs['original_comparison_observation'].strip():
                 raise ValidationError('each final page needs actual original-reference text/font/layout comparison')
+        if any(e['page'] == obs['page'] for e in plan.get('text_optimizations', [])):
+            if not isinstance(obs.get('text_quality_observation'), str) or not obs['text_quality_observation'].strip():
+                raise ValidationError('文字优化页须实际检查正文、层级、断行、溢出及留白并记录质量观察')
     if review.get("unresolved_issues") != []:
         raise ValidationError("background review requires an explicit empty unresolved_issues list")
     return manifest
@@ -578,6 +650,12 @@ def _complete_reviews(state: dict[str, Any]) -> None:
     task = state["stage5_animation"]
     fonts_done = not task.get("font_repair_enabled") or task.get("font_review_accepted") is True
     complete = fonts_done and task.get("background_accepted") is True
+    task['text_content_accepted'] = not task.get('pending_text_issues')
+    if complete and task.get('pending_text_issues'):
+        task['status'] = 'needs_manual_adjustment'
+        if state['workflow']['mode'] == 'animation_only':
+            state.update(status='animation_active', required_actor='main_controller', next_required_action='可执行页面已完成，处理明确列出的正文待办')
+        return
     task["status"] = "completed" if complete else ("waiting_font_review" if task.get("background_accepted") else "waiting_background_review")
     if state["workflow"]["mode"] == "animation_only":
         state.update({"status": "completed" if complete else "animation_active",

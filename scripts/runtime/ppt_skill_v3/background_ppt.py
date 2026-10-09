@@ -521,11 +521,17 @@ def export_background_states(run_dir):
         manifest = skipped_verification(task['output'],render['capability'])
         manifest.update(input=task['input'], input_sha256=task['input_sha256'], output=task['output'], output_sha256=task['output_sha256'],
                         plan_sha256=task['plan_sha256'], pages=pages,
-                        structural_timeline_checked=True, visual_states_verified=False)
+                        structural_timeline_checked=True, visual_states_verified=False,
+                        pending_text_issues=plan.get('pending_text_issues', []),
+                        text_content_accepted=not bool(plan.get('pending_text_issues')))
         task.update(status='verification_skipped', background_accepted=False, verification_skipped=True,
                     verification_skip_reason=manifest['reason'], background_manifest='_state/阶段5/background_manifest.json')
         if state['workflow']['mode'] == 'animation_only':
-            state.update(status='completed',required_actor='none',next_required_action='动画文件与时间轴已核验；缺环境，视觉/字体验证未执行')
+            if plan.get('pending_text_issues'):
+                state.update(status='animation_active',required_actor='main_controller',
+                             next_required_action='安全页文件与时间轴已核验；正文待办保留，缺环境未完成视觉/字体验证')
+            else:
+                state.update(status='completed',required_actor='none',next_required_action='动画文件与时间轴已核验；缺环境，视觉/字体验证未执行')
         from .artifact_commit import commit_project_artifact
         commit_project_artifact(root,state,task['background_manifest'],manifest)
         return manifest
@@ -534,11 +540,15 @@ def export_background_states(run_dir):
     # Full final-state parity against the input preview is a meaningful extra
     # gate for timing-only work. Authorized font edits are reviewed visually.
     parity=[]
-    if not plan.get('font_repairs'):
+    changed_pages = {e['page'] for e in plan.get('font_repairs', []) + plan.get('text_optimizations', [])}
+    if len(changed_pages) < len(pages):
         from PIL import Image, ImageChops
         previews=read_json(root/'_state/阶段5/preview_manifest.json')
         originals={x['page']:x for x in previews['images']}
         for page in pages:
+            if page['page'] in changed_pages:
+                parity.append({'page': page['page'], 'exact_match': None, 'method': 'authorized_text_quality_review'})
+                continue
             final=next(x for x in mapping if x['page']==page['page'] and x['step']==len(page['states'])-1)
             original=root/originals[page['page']]['path']
             if file_sha256(original)!=originals[page['page']]['sha256']:

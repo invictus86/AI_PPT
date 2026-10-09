@@ -217,7 +217,7 @@ def create_canva_task_brief(
         "slides": slides,
         "authority_contract": {
             "expected_text_field": "slides[].final_visible_text",
-            "match_rule": "The page audit expected_text and a passed copy_check post_edit_text must exactly equal final_visible_text for the same slide_index.",
+            "match_rule": "expected_text equals final_visible_text; actual readback preserves content, allowing wrapping, Chinese layout spacing and evidence-bound retained artwork spans.",
             "visual_reference": "stage2_image_deck_pdf and the same-index stage2 image when present",
         },
         "created_at": created_at,
@@ -311,6 +311,8 @@ def record_canva_task_event(
             if {a['slide_index'] for a in checked_event['page_audits']} != set(checked_event['slide_indices']):
                 raise ValidationError('提交须保留本批全部页面的最新回读证据')
             _validate_committable_page_audits(checked_event['page_audits'])
+        for audit in checked_event['page_audits']:
+            _validate_graphic_copy_evidence(root, audit)
     elif (task.get('text_policy') == 'stage1_unchanged_fonts_only' or task.get('schema_version') == '1.2') and checked_event['transaction_status'] in {'draft', 'committed'}:
         if set(checked_event['operation_types']) - FONT_ONLY_OPERATIONS:
             raise ValidationError('Canva仅允许字体/粗细操作，禁止替换、增删或改写文字')
@@ -462,6 +464,8 @@ def resolve_canva_recovery(run_dir, task_id, evidence):
         if repair and texts != {slide['slide_index']: slide['final_visible_text'] for slide in read_json(task_dir/'reference_text_by_slide.json')['slides']}:
             raise ValidationError('阶段1已变化，原failed修复参考失效，不能恢复为合格保存')
         for audit in previous['page_audits']:
+            if repair:
+                _validate_graphic_copy_evidence(root, audit)
             if not repair and (audit['current_text'] != texts.get(audit['slide_index']) or audit['copy_check']['post_edit_text'] != texts.get(audit['slide_index'])):
                 raise ValidationError('恢复保存结果的文字与当前阶段1不一致')
             if not repair and any(check['attribute'] not in {'font_family', 'font_weight'} and check['before'] != check['after'] for check in audit['visual_checks'] if check['status'] == 'pass'):
@@ -666,8 +670,27 @@ def _validate_copy_check(value: Any, *, expected_text: list[str]) -> dict[str, A
     if status not in CANVA_COPY_CHECK_STATUSES:
         raise ValidationError("unsupported Canva page audit copy_check status")
     post_edit_text = _normalize_text_list(value.get("post_edit_text"), field="copy_check.post_edit_text")
-    if status == "pass" and post_edit_text != expected_text:
-        raise ValidationError("a passed Canva copy_check post_edit_text must exactly match expected_text")
+    from .text_optimization import page_text_equal
+    graphic_spans = value.get('graphic_spans', [])
+    compared = list(expected_text)
+    if graphic_spans:
+        from .text_mapping_review import _editable_expected
+        if not isinstance(graphic_spans, list) or value.get('controller_reviewed') is not True:
+            raise ValidationError('图像文字须实际对照原版和当前预览')
+        used = set()
+        for entry in graphic_spans:
+            if not isinstance(entry, dict):
+                raise ValidationError('图像文字映射项必须是对象')
+            index = entry.get('unit_index')
+            if type(index) is not int or not 0 <= index < len(expected_text) or index in used:
+                raise ValidationError('图像文字须按批准原文单位定位，不得重复排除')
+            used.add(index)
+            compared[index] = _editable_expected(entry, expected_text[index])
+        for key in ('reference_visual', 'export_visual', 'reference_visual_sha256', 'export_visual_sha256'):
+            if not isinstance(value.get(key), str) or not value[key]:
+                raise ValidationError('图像文字须保留原版和实际Canva预览证据')
+    if status == "pass" and not page_text_equal(post_edit_text, compared):
+        raise ValidationError("a passed Canva copy_check must preserve original words, numbers and punctuation; layout may vary")
     if status == 'verification_skipped':
         if value.get('mode') not in {'unmodified_image', 'retained_artwork'} or not isinstance(value.get('reason'), str) or not value['reason'].strip():
             raise ValidationError('无文本层只能明确记录保留未修改的原图和未文字核验原因')
@@ -681,12 +704,29 @@ def _validate_copy_check(value: Any, *, expected_text: list[str]) -> dict[str, A
             source = ''.join(expected_text).replace('\n', '').replace('\r', '')
             for token in tokens:
                 source = source.replace(' ' + token + ' ', '').replace(token, '')
-            actual = ''.join(post_edit_text).replace('\n', '').replace('\r', '')
-            if actual != source:
+            if not page_text_equal(post_edit_text, [source]):
                 raise ValidationError('图形箭头例外不得掩盖可编辑文字缺失或错误')
             return {'status': status, 'post_edit_text': post_edit_text, 'mode': value['mode'], 'reason': value['reason'], 'retained_element_ids': ids, 'editable_text_verified': True, 'artwork_text_tokens': tokens}
         return {'status': status, 'post_edit_text': post_edit_text, 'mode': value['mode'], 'reason': value['reason'], 'retained_element_ids': ids}
-    return {"status": status, "post_edit_text": post_edit_text}
+    result = {"status": status, "post_edit_text": post_edit_text}
+    if graphic_spans:
+        result.update({key: value[key] for key in ('graphic_spans', 'controller_reviewed', 'reference_visual',
+                                                  'export_visual', 'reference_visual_sha256', 'export_visual_sha256')})
+    return result
+
+
+def _validate_graphic_copy_evidence(root, audit):
+    copy = audit['copy_check']
+    if not copy.get('graphic_spans'):
+        return
+    from .text_mapping_review import _visual
+    for key in ('reference_visual', 'export_visual'):
+        _visual(Path(root), copy, key)
+    canonical = Path(root) / f"阶段2_图片版PPT/img/slide_{audit['slide_index']:03d}.png"
+    reference = Path(copy['reference_visual'])
+    reference = reference if reference.is_absolute() else Path(root) / reference
+    if canonical.is_file() and reference.resolve() != canonical.resolve():
+        raise ValidationError('Canva图像文字必须对照原版同页')
 
 
 def _validate_visual_check(value: Any) -> dict[str, str]:

@@ -85,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     animation_start_parser.add_argument("--evidence", required=True)
     animation_start_parser.add_argument("--repair-fonts", action="store_true", help="Enable explicitly authorized sentence/title compatibility repair; preserve normal fonts.")
     animation_start_parser.add_argument('--match-reference-fonts', action='store_true', help='Enable separately authorized reference font matching and import Canva font handoff; preserve all text/layout.')
+    animation_start_parser.add_argument('--optimize-text', action='store_true', help='Enable authorized mild text presentation optimization and source-backed conversion restoration; includes common font matching.')
     font_candidates_parser = subparsers.add_parser('list-font-candidates', help='List common installed non-premium font faces covering exact UTF-8 text; no automatic visual verdict.')
     font_candidates_parser.add_argument('--text-file', required=True)
     animation_plan_parser = subparsers.add_parser("record-animation-plan", help="Record a controller-reviewed per-page teaching animation plan.")
@@ -394,7 +395,7 @@ def build_parser() -> argparse.ArgumentParser:
     canva_recovery.add_argument('--run-dir', required=True)
     canva_recovery.add_argument('--task-id', required=True)
     canva_recovery.add_argument('--evidence', required=True)
-    text_check = subparsers.add_parser('verify-stage1-text', help='Compare converted/exported PPTX editable text with exact stage1 page text; never rewrite it.')
+    text_check = subparsers.add_parser('verify-stage1-text', help='Compare exported PPTX content with approved stage1 text, accepting layout variation and reviewed image-text mappings; never rewrite input.')
     text_check.add_argument('--run-dir', required=True)
     text_check.add_argument('--input-pptx', required=True)
     text_mapping = subparsers.add_parser('record-animation-text-mapping', help='Record evidence-bound reviewed Canva export paragraph/spacing/graphic mappings; never change slide text.')
@@ -524,7 +525,7 @@ def _execute(args, parser):
         from .teaching_animation import start_animation, record_animation_plan, execute_animation, accept_background_review, export_animation_previews, accept_font_review
         if args.command == "inspect-animation":
             result = start_animation(args.run_dir, args.input_pptx, args.evidence, repair_fonts=args.repair_fonts,
-                                     match_reference_fonts=args.match_reference_fonts)
+                                     match_reference_fonts=args.match_reference_fonts, optimize_text=args.optimize_text)
         elif args.command == "export-animation-previews":
             result = export_animation_previews(args.run_dir)
         elif args.command == "record-animation-plan":

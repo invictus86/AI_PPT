@@ -1,4 +1,4 @@
-# Canva辅助编辑任务规范 · 1.3.6
+# Canva辅助编辑任务规范 · 1.3.10
 
 ## 路由、范围与授权
 
@@ -6,7 +6,7 @@
 
 用户请求修订并保存即为本次范围内直接提交授权，不再逐批询问。范围由本次原话确定：
 - 默认仅授权字体/粗细时，维持仅字体/粗细。
-- 用户明确要求错别字、乱码、标点、字号、颜色、元素等修复时，依据原版修复当前工具支持的属性，不以默认范围拒绝已授权工作。
+- 用户请求可编辑文字优化或轻微排版优化，即授权主控在工具能力内连续调整字体呈现、粗细、字号、颜色、间距、断行及文本框位置/尺寸，并还原有原稿依据的转换错误。按[可编辑文字优化规范](可编辑文字优化规范.md)登记一次范围，不逐批、逐页或逐句重新询问；正文不改写。
 - 页面内容以项目阶段1批准文字为目标。恢复转换误识别属于还原，不能改写、添加新教学结论或覆盖content.json。
 - 元素位置/尺寸、文本格式可按同页参考最小修复。整套检查不意味着每页必须改动；有效页面与有效对象保留。
 - 没有对应工具能力时不承诺精确字体族、复杂形状、背景、动画、批量Magic Layers或新增文本框。图片内字无独立文本层时保留原图，记录未文字核验，不新增覆盖层伪装修复。
@@ -24,11 +24,13 @@ Canva是阶段外任务，不重跑阶段0—4，不重写配套，不设置基�
 每页建立slide_index与Canva page_id映射，记录expected_text、current_text、差异、操作及回读结果。拆成多个对象或合在一个对象的文字，按实际阅读关系映射；不要把API对象存储顺序当成视觉顺序，不要因换行、合并对象虚报错字。保留正文标点、数字、单位与有意义空格。
 
 修改后再次读文本/对象：
-- 文字修复目标必须逐项等于批准文案；current_text可保留修复前转换错误，post_edit_text必须反映实际回读，不能直接复制expected_text伪造结果。
+- 文字修复目标保持批准正文的字词、数字、答案和含义标点；正常断行、分段和明确中文排版空格可不同，英文/公式有意义空格保持。current_text可保留修复前转换错误，post_edit_text必须反映实际回读，不能直接复制expected_text伪造结果。
 - 非文字属性记录依据与前后值；没有源依据时保留，不凭统一模板重排全稿。
 - 已发现文字缺失、溢出、对象错误等仍须解决或明确剩余项；不能使用“未视觉核验”掩盖已知失败。
 - 整图页没有文本层时，copy_check.status=verification_skipped、mode=unmodified_image，保存实际保留的对象ID和原因；该页无修改操作，不冒称逐字核验通过。
 - 原版箭头由图片对象承载时，保留该对象，mode=retained_artwork；仍须回读全部可编辑文字，editable_text_verified=true、artwork_text_tokens记录箭头字符。只免除箭头像素核验，不能掩盖正文错误。
+- 原图承载的模块编号、标签或其他批准文字可登记copy_check.graphic_spans；精确定位原文范围，绑定原版同页与当前实际预览，并由主控确认原图文字仍在。该例外不新增覆盖文字，格式与证据见可编辑文字优化规范。
+- 无法确定的正文冲突记录具体页码、原因和未完成项，保留该页；继续其他有依据的安全页。交付明确区分已保存范围与正文待办，不把局部完成写成全稿文字验收通过。
 
 ## 插件预览与持续执行
 
@@ -80,7 +82,7 @@ python .skill/scripts/pptctl.py create-canva-task-brief --run-dir <项目> --pro
 python .skill/scripts/pptctl.py authorize-canva-repair --run-dir <项目> --task-id <任务> --evidence <真实用户原话> --operation replace_text --operation format_text --operation position_element --operation resize_element
 ```
 
-新任务默认仍为stage1_unchanged_fonts_only；上述显式登记改为authorized_reference_repair，不自动扩大旧授权。允许修复前文字与权威不同，修复后必须实际回读为权威文字，阶段1改变仍使旧参考失效。
+新任务初始合同为stage1_unchanged_fonts_only；用户已请求可编辑文字优化时，主控直接用上述命令登记authorized_reference_repair，无需再次向用户确认。纯字体/粗细的窄范围请求保留原范围。允许修复前文字与权威不同，修复后实际回读内容保真，接受批准的排版差异；阶段1改变仍使旧参考失效。
 
 记录在_state/工具任务/canva/<task_id>/，含task、design_link、reference_text_by_slide、page_audit、batch_edit_log、未处理项。preview_status、visual_verification与copy_check保持真实；runtime只检验合同，不自动判断审美或声称看过图像。draft后登记真实committed/cancelled/failed，正常终态释放同设计租约，failed保留租约待恢复。
 

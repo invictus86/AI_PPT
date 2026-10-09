@@ -82,24 +82,31 @@ def load_mapping_review(root, source, authority, document=None):
 
 
 def _editable_expected(unit, expected):
-    """Account for reviewed graphic fill lines without inserting slide text."""
+    """Account for evidenced original graphic/text spans without inserting text."""
     spans = unit.get('graphic_spans', [])
     _require(isinstance(spans, list), 'graphic_spans must be a list')
     covered = set()
     for span in spans:
-        _require(isinstance(span, dict) and span.get('kind') == 'fill_line',
-                 'only graphic fill lines are supported in graphic_spans')
+        _require(isinstance(span, dict) and span.get('kind') in {'fill_line', 'retained_text'},
+                 'use a reviewed graphic fill line or retained original text')
         start, end = span.get('start'), span.get('end')
         _require(type(start) is int and type(end) is int and 0 <= start < end <= len(expected),
-                 'invalid graphic fill-line range')
+                 'invalid retained graphic/text range')
         text = expected[start:end]
-        _require(span.get('text') == text and len(text) >= 2 and set(text) <= {'_', '＿'},
-                 'graphic fill lines may account only for exact underscore placeholders')
+        _require(span.get('text') == text, 'graphic text must equal the exact approved range')
+        if span['kind'] == 'fill_line':
+            _require(len(text) >= 2 and set(text) <= {'_', '＿'},
+                     'graphic fill lines may account only for exact underscore placeholders')
+        else:
+            _require(span.get('original_graphic_confirmed') is True and span.get('current_graphic_confirmed') is True,
+                     'actually compare the exact text in the original and current page images')
+            _require(isinstance(span.get('visual_location'), str) and span['visual_location'].strip(),
+                     'locate the retained image text on the page')
         _require(span.get('display_equivalent_confirmed') is True,
-                 'confirm the fill line in the original and current page images')
+                 'confirm the graphic/text span in the original and current page images')
         _reason(span)
         positions = set(range(start, end))
-        _require(not covered.intersection(positions), 'overlapping graphic fill-line ranges')
+        _require(not covered.intersection(positions), 'overlapping graphic/text ranges')
         covered.update(positions)
     return ''.join(c for pos, c in enumerate(expected) if pos not in covered)
 
@@ -120,7 +127,7 @@ def check_mapped_page(page, actual_units, expected_units):
         editable_expected = _editable_expected(unit, expected_units[i])
         sources = unit.get('sources')
         _require(isinstance(sources, list) and (bool(sources) or editable_expected == ''),
-                 'needs exact source paragraphs unless the whole unit is a reviewed graphic fill line')
+                 'needs exact source paragraphs unless the whole unit is an evidenced retained graphic/text span')
         chunks = []
         for src in sources:
             _require(isinstance(src, dict), 'source must be an object')
@@ -168,7 +175,7 @@ def record_mapping_review(root, source, document):
             'review_sha256': file_sha256(Path(root) / REVIEW), 'input_unchanged': True}
 
 
-def require_task_mapping(root, task):
+def require_task_mapping(root, task, text_optimizations=None):
     authority = task.get('approved_text_authority')
     if authority:
         _require(file_sha256(Path(root) / authority) == task.get('approved_text_authority_sha256'),
@@ -179,4 +186,5 @@ def require_task_mapping(root, task):
                  'mapping review changed after inspection')
     if path or authority:
         from .text_preservation import verify_stage1_text
-        return verify_stage1_text(root, task['input'])
+        return verify_stage1_text(root, task['input'], text_optimizations=text_optimizations,
+                                  collect_differences=task.get('text_optimization_enabled', False))

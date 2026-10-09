@@ -184,7 +184,20 @@ def validate_handoff_resolutions(root, task, plan, inspection):
         _text(resolution, 'mapping_reason')
         local_evidence(root, resolution.get('visual_evidence'))
         repairs = [r for r in plan.get('font_repairs', []) if r.get('handoff_id') == identity]
+        optimizations = [e for e in plan.get('text_optimizations', []) if e.get('handoff_id') == identity
+                         and e.get('run_format', {}).get('font_family')]
         if status == 'replace':
+            if optimizations:
+                from .text_optimization import layout_text
+                if repairs or len(optimizations) != len(identities):
+                    raise ValidationError('字体交接须由一组完整文字优化或一条字体修复完成，不能重复执行')
+                by_shape = {e['shape_id']: e for e in optimizations if e['page'] == page}
+                if set(by_shape) != set(identities) or layout_text(''.join(
+                        by_shape[i].get('after_text', by_shape[i]['before_text']) for i in identities)) != layout_text(item['text']):
+                    raise ValidationError('文字优化必须完整覆盖交接标题或句子，按实际阅读顺序定位')
+                if len({e['run_format']['font_family'] for e in optimizations}) != 1:
+                    raise ValidationError('完整交接文字使用同一相近字体')
+                continue
             if len(repairs) != 1:
                 raise ValidationError('replacement needs exactly one mapped font repair')
             repair_ids = [s['shape_id'] for s in repairs[0]['segments']] if 'segments' in repairs[0] else [repairs[0]['shape_id']]
@@ -192,8 +205,11 @@ def validate_handoff_resolutions(root, task, plan, inspection):
                 raise ValidationError('replacement object ranges do not match handoff reading order')
             if normalized_text(repairs[0]['text']) != normalized_text(item['text']):
                 raise ValidationError('font repair must cover the handed-off complete text')
-        elif repairs:
+        elif repairs or optimizations:
             raise ValidationError('no_change handoff must not execute a font repair')
     for repair in plan.get('font_repairs', []):
         if repair.get('handoff_id') and repair['handoff_id'] not in items:
             raise ValidationError('font repair refers to an unknown handoff')
+    for entry in plan.get('text_optimizations', []):
+        if entry.get('handoff_id') and entry['handoff_id'] not in items:
+            raise ValidationError('文字优化引用了未知字体交接项')

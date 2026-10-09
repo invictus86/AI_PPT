@@ -307,6 +307,190 @@
           }
         ]
       }
+    },
+    "text_optimizations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "page",
+          "shape_id",
+          "before_text",
+          "controller_reviewed",
+          "mild_adjustment_confirmed",
+          "reason",
+          "visual_evidence"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shape_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "before_text": {
+            "type": "string"
+          },
+          "after_text": {
+            "type": "string"
+          },
+          "controller_reviewed": {
+            "const": true
+          },
+          "mild_adjustment_confirmed": {
+            "const": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "visual_evidence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text_change": {
+            "enum": [
+              "layout",
+              "reference_restoration"
+            ]
+          },
+          "reference_restoration_confirmed": {
+            "const": true
+          },
+          "run_format": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "font_family": {
+                "type": "string",
+                "minLength": 1
+              },
+              "font_size": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "bold": {
+                "type": "boolean"
+              },
+              "italic": {
+                "type": "boolean"
+              },
+              "underline": {
+                "type": "boolean"
+              },
+              "character_spacing": {
+                "type": "number"
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{6}$"
+              }
+            }
+          },
+          "paragraph_format": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "alignment": {
+                "enum": [
+                  "left",
+                  "center",
+                  "right",
+                  "justify"
+                ]
+              },
+              "line_spacing_percent": {
+                "type": "number"
+              },
+              "line_spacing_points": {
+                "type": "number"
+              },
+              "space_before": {
+                "type": "number"
+              },
+              "space_after": {
+                "type": "number"
+              },
+              "indent": {
+                "type": "number"
+              },
+              "margin_left": {
+                "type": "number"
+              }
+            }
+          },
+          "text_box": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "vertical_anchor": {
+                "enum": [
+                  "top",
+                  "middle",
+                  "bottom"
+                ]
+              },
+              "left": {
+                "type": "number"
+              },
+              "top": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              },
+              "margin_left": {
+                "type": "number"
+              },
+              "margin_right": {
+                "type": "number"
+              },
+              "margin_top": {
+                "type": "number"
+              },
+              "margin_bottom": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "pending_text_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "page",
+          "status",
+          "reason",
+          "visual_evidence"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "const": "unresolved"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "visual_evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "additionalProperties": true
