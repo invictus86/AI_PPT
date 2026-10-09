@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import os
+import unicodedata
 import zipfile
 
 from lxml import etree
@@ -18,6 +20,69 @@ P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 TARGET_FONT = "微软雅黑"
 FONT_SLOTS = ("latin", "ea", "cs", "sym")
+COMMON_FONT_FAMILIES = {
+    '微软雅黑', 'Microsoft YaHei', 'Microsoft YaHei UI', '宋体', 'SimSun', '新宋体', 'NSimSun',
+    '黑体', 'SimHei', '楷体', 'KaiTi', '仿宋', 'FangSong', '幼圆', 'YouYuan', '等线', 'DengXian',
+    '思源黑体', '思源宋体', 'Source Han Sans SC', 'Source Han Serif SC',
+    'Source Han Sans CN', 'Source Han Serif CN', 'Noto Sans CJK SC', 'Noto Serif CJK SC',
+    'Noto Sans SC', 'Noto Serif SC', '文泉驿微米黑', 'WenQuanYi Micro Hei',
+    '文泉驿正黑', 'WenQuanYi Zen Hei', 'Heiti SC', 'STHeiti', 'Songti SC', 'STSong',
+    'Kaiti SC', 'STKaiti', 'Arial', 'Calibri', 'Aptos', 'Times New Roman'
+}
+
+
+def system_font_roots():
+    return [Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts',
+            Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'Microsoft/Windows/Fonts',
+            Path('/Library/Fonts'), Path('/System/Library/Fonts'), Path.home() / 'Library/Fonts',
+            Path('/usr/share/fonts'), Path('/usr/local/share/fonts'),
+            Path.home() / '.fonts', Path.home() / '.local/share/fonts']
+
+
+def is_installed_font(path: Path) -> bool:
+    """Require a system/user font location or an actual Windows font registration."""
+    path = path.resolve()
+    roots = system_font_roots()
+    if any(path.is_relative_to(root.resolve()) for root in roots):
+        return True
+    if os.name == 'nt':
+        import winreg
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(hive, r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts') as key:
+                    for index in range(winreg.QueryInfoKey(key)[1]):
+                        value = winreg.EnumValue(key, index)[1]
+                        if isinstance(value, str) and Path(value).is_absolute() and Path(value).resolve() == path:
+                            return True
+            except OSError:
+                continue
+    return False
+
+
+def validate_reference_font(repair):
+    from fontTools.ttLib import TTFont
+    if repair.get('non_premium') is not True or repair.get('target_font', '').casefold() not in {f.casefold() for f in COMMON_FONT_FAMILIES}:
+        raise ValidationError('choose a common installed non-premium font; paid/member/custom families are excluded')
+    path = Path(repair.get('font_file', ''))
+    if not path.is_absolute() or not path.is_file() or not is_installed_font(path):
+        raise ValidationError('reference font must exist and be installed on this computer')
+    index = repair.get('font_face_index', 0)
+    if type(index) is not int or index < 0:
+        raise ValidationError('invalid collection font face index')
+    try:
+        with TTFont(path, fontNumber=index) as font:
+            names = {n.toUnicode().casefold() for n in font['name'].names if n.nameID in {1, 16}}
+            if repair['target_font'].casefold() not in names:
+                raise ValidationError('target font does not match the installed font file family')
+            cmap = font.getBestCmap() or {}
+            missing = {c for c in repair['text'] if not c.isspace()
+                       and unicodedata.category(c) != 'Cf' and ord(c) not in cmap}
+            if missing:
+                raise ValidationError('reference font lacks required glyphs: ' + ''.join(sorted(missing)))
+    except ValidationError:
+        raise
+    except Exception as exc:
+        raise ValidationError('cannot inspect reference font file') from exc
 
 
 def _body(shape):
@@ -118,8 +183,25 @@ def validate_repairs(source: Path, parts: list[str], repairs: list[dict]) -> Non
             for key in ("reason", "bold_reason", "visual_evidence", "single_font_intent_evidence", "boundary_reason"):
                 if not isinstance(repair.get(key), str) or not repair[key].strip():
                     raise ValidationError(f"font repair needs {key}")
-            if repair.get("target_font", TARGET_FONT) != TARGET_FONT:
-                raise ValidationError("compatibility repairs use Microsoft YaHei only")
+            mode = repair.get('mode', 'compatibility')
+            if mode not in {'compatibility', 'reference_match'}:
+                raise ValidationError('unknown font repair mode')
+            # Existing narrow YaHei plans remain readable. Newly recorded explicit modes
+            # choose a reviewed common font; YaHei is a candidate, not a forced target.
+            if 'mode' in repair or repair.get('target_font', TARGET_FONT) != TARGET_FONT:
+                for field in ('target_font', 'font_match_reason', 'sample_review_evidence'):
+                    if not isinstance(repair.get(field), str) or not repair[field].strip():
+                        raise ValidationError('common font matching needs ' + field)
+                candidates = repair.get('candidate_fonts')
+                if not isinstance(candidates, list) or not candidates or not all(isinstance(f, str) and f.strip() for f in candidates):
+                    raise ValidationError('record actual reference font candidates')
+                if any(f.casefold() not in {n.casefold() for n in COMMON_FONT_FAMILIES} for f in candidates):
+                    raise ValidationError('exclude paid/member/unknown families from font candidates')
+                if repair['target_font'] not in candidates:
+                    raise ValidationError('chosen reference font must be among reviewed candidates')
+                validate_reference_font(repair)
+            if mode == 'reference_match' and not isinstance(repair.get('reference_visual'), str):
+                raise ValidationError('reference matching needs original visual evidence')
             for node, _, offset, token in _tokens(shape):
                 if offset < end and offset + len(token) > start and node is not None and node.tag == A + "fld":
                     raise ValidationError("text fields need manual font repair; do not rebuild them")
@@ -129,7 +211,7 @@ def validate_repairs(source: Path, parts: list[str], repairs: list[dict]) -> Non
             seen.setdefault(key, []).append((start, end))
 
 
-def _set_font(run, bold):
+def _set_font(run, bold, target_font=TARGET_FONT):
     properties = run.find(A + "rPr")
     if properties is None:
         properties = etree.Element(A + "rPr")
@@ -143,7 +225,7 @@ def _set_font(run, bold):
             later = {A + name for name in order[index + 1:]}
             insert_at = next((i for i, n in enumerate(properties) if n.tag in later), len(properties))
             properties.insert(insert_at, font)
-        font.set("typeface", TARGET_FONT)
+        font.set("typeface", target_font)
 
 
 def patch_font_tree(tree, repairs):
@@ -163,7 +245,7 @@ def patch_font_tree(tree, repairs):
             cuts = sorted({0, len(text), *(max(0, r["start"] - offset) for r in matches),
                            *(min(len(text), r["end"] - offset) for r in matches)})
             if cuts == [0, len(text)]:
-                _set_font(node, matches[0]["bold"])
+                _set_font(node, matches[0]["bold"], matches[0].get('target_font', TARGET_FONT))
                 continue
             position = paragraph.index(node)
             paragraph.remove(node)
@@ -172,7 +254,7 @@ def patch_font_tree(tree, repairs):
                 segment.find(A + "t").text = text[left:right]
                 unit = next((r for r in matches if r["start"] <= offset + left < r["end"]), None)
                 if unit is not None:
-                    _set_font(segment, unit["bold"])
+                    _set_font(segment, unit["bold"], unit.get('target_font', TARGET_FONT))
                 paragraph.insert(position + index, segment)
     return tree
 

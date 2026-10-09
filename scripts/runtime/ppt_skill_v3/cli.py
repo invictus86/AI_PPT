@@ -84,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
     animation_start_parser.add_argument("--input-pptx", required=True)
     animation_start_parser.add_argument("--evidence", required=True)
     animation_start_parser.add_argument("--repair-fonts", action="store_true", help="Enable explicitly authorized sentence/title compatibility repair; preserve normal fonts.")
+    animation_start_parser.add_argument('--match-reference-fonts', action='store_true', help='Enable separately authorized reference font matching and import Canva font handoff; preserve all text/layout.')
+    font_candidates_parser = subparsers.add_parser('list-font-candidates', help='List common installed non-premium font faces covering exact UTF-8 text; no automatic visual verdict.')
+    font_candidates_parser.add_argument('--text-file', required=True)
     animation_plan_parser = subparsers.add_parser("record-animation-plan", help="Record a controller-reviewed per-page teaching animation plan.")
     animation_plan_parser.add_argument("--run-dir", required=True)
     animation_plan_parser.add_argument("--plan", required=True)
@@ -187,6 +190,10 @@ def build_parser() -> argparse.ArgumentParser:
     canva_task_parser.add_argument("--provider", default="canva_international")
     canva_task_parser.add_argument("--host-profile", choices=["codex", "workbuddy", "unknown"], default="unknown")
     canva_task_parser.add_argument("--executor", choices=["canva_mcp", "canva_plugin", "manual_handoff", "unresolved"], default="unresolved")
+    handoff_parser = subparsers.add_parser('record-canva-font-handoff', help='Record reviewed complete text and local visual evidence for pending PPTX font matching.')
+    handoff_parser.add_argument('--run-dir', required=True)
+    handoff_parser.add_argument('--task-id', required=True)
+    handoff_parser.add_argument('--handoff', required=True, help='Controller reviewed JSON file, including items (empty if none).')
     repair_parser = subparsers.add_parser('authorize-canva-repair', help='Record explicit human authorization for reference-based Canva text and layout repair.')
     repair_parser.add_argument('--run-dir', required=True)
     repair_parser.add_argument('--task-id', required=True)
@@ -427,6 +434,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _execute(args, parser):
+    if args.command == 'list-font-candidates':
+        from .font_candidates import common_font_candidates
+        print(json.dumps(common_font_candidates(Path(args.text_file).read_text(encoding='utf-8')), ensure_ascii=False))
+        return 0
     if args.command == 'verification-capabilities':
         from .verification_environment import verification_capability
         print(json.dumps({kind: verification_capability(kind) for kind in ('docx', 'pdf', 'pptx')}, ensure_ascii=False))
@@ -504,7 +515,8 @@ def _execute(args, parser):
     if args.command in {"inspect-animation", "export-animation-previews", "record-animation-plan", "apply-teaching-animation", "record-animation-background-review", "record-animation-font-review", "export-animation-states"}:
         from .teaching_animation import start_animation, record_animation_plan, execute_animation, accept_background_review, export_animation_previews, accept_font_review
         if args.command == "inspect-animation":
-            result = start_animation(args.run_dir, args.input_pptx, args.evidence, repair_fonts=args.repair_fonts)
+            result = start_animation(args.run_dir, args.input_pptx, args.evidence, repair_fonts=args.repair_fonts,
+                                     match_reference_fonts=args.match_reference_fonts)
         elif args.command == "export-animation-previews":
             result = export_animation_previews(args.run_dir)
         elif args.command == "record-animation-plan":
@@ -609,6 +621,11 @@ def _execute(args, parser):
         return 0
     if args.command == "organize-deliverables":
         print(json.dumps(organize_deliverables(args.run_dir), ensure_ascii=False))
+        return 0
+    if args.command == 'record-canva-font-handoff':
+        from .font_handoff import record_font_handoff
+        result = record_font_handoff(args.run_dir, args.task_id, read_json(args.handoff))
+        print(json.dumps(result, ensure_ascii=False))
         return 0
     if args.command == "create-canva-task-brief":
         result = create_canva_task_brief(

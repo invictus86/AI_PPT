@@ -201,6 +201,7 @@ def create_canva_task_brief(
             "Preserve every stage1 text item; only change supported font family and font weight. Text mismatches are blocked, not rewritten.",
             "Use five pages as the default editing batch, then commit directly after the AI controller review passes.",
             "Review every changed-page preview, then commit directly under the standing direct-edit policy; do not wait for another user batch confirmation.",
+            "After saved readback, record-canva-font-handoff with complete approved sentences/titles and actual same-page reference/preview evidence; empty items if no pending font issues. This does not authorize PPTX replacement or change Canva font families.",
         ],
         "warnings": warnings,
     }

@@ -129,6 +129,184 @@
           }
         }
       }
+    },
+    "font_repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "page",
+          "shape_id",
+          "unit_kind",
+          "start",
+          "end",
+          "text",
+          "whole_unit_confirmed",
+          "bold",
+          "reason",
+          "bold_reason",
+          "boundary_reason",
+          "single_font_intent_evidence",
+          "visual_evidence"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shape_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "unit_kind": {
+            "enum": [
+              "sentence",
+              "title"
+            ]
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "whole_unit_confirmed": {
+            "const": true
+          },
+          "bold": {
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "compatibility",
+              "reference_match"
+            ]
+          },
+          "target_font": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidate_fonts": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "non_premium": {
+            "const": true
+          },
+          "font_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "font_face_index": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "target_font",
+                "candidate_fonts",
+                "non_premium",
+                "font_file",
+                "font_match_reason",
+                "sample_review_evidence"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "reference_match"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "reference_visual"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "font_handoff_resolutions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "handoff_id",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "handoff_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "replace",
+              "no_change",
+              "blocked"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shape_id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "replace",
+                    "no_change"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "page",
+                "shape_id",
+                "mapping_reason",
+                "visual_evidence"
+              ]
+            }
+          }
+        ]
+      }
     }
   },
   "additionalProperties": true

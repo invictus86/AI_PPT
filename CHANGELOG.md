@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.6 - 2026-10-09
+
+- Canva字体族能力不足时登记完整字体交接清单，保存含封面页码、完整文字、原版及保存后插件预览指纹，待办不冒称已修复。阶段5自动导入并按PPTX实际对象重新定位，歧义/拆分/烘焙文字明确阻断，在线Canva设计不回写。
+- 阶段5分compatibility与经单独授权的reference_match两种模式；兼容修复也改为常见相近非会员字体，不固定微软雅黑。新增本机候选查询、常见家族白名单、真实安装/家族/完整字形覆盖校验、字体文件及试修/原版证据指纹，保留整句/完整标题和禁止全稿替换边界。
+- 新命令record-canva-font-handoff、list-font-candidates；inspect-animation新增--match-reference-fonts。交接逐项replace/no_change/blocked，全状态后台验收后单独记录PPTX结果；原有窄范围微软雅黑计划不自动扩大授权。
+- 验证入口：字体与交接契约回归、完整unittest、JSON schema、skill-creator quick_validate、inspect-installation、发布包范围核对。合成测试不冒充真实课件或目标播放器视觉验收。
+
 ## 1.3.5 - 2026-10-08
 
 - 新建项目从原始主题文件夹继承明确编号、前导零及分隔形式；对话中指定的编号优先，年份/日期/页码/素材号及资料类型目录号不作为主题编号，无可靠依据不编造。

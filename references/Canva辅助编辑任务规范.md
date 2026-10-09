@@ -1,4 +1,4 @@
-# Canva辅助编辑任务规范 · 1.3.2
+# Canva辅助编辑任务规范 · 1.3.6
 
 ## 路由、范围与授权
 
@@ -91,5 +91,13 @@ python .skill/scripts/pptctl.py resolve-canva-recovery --run-dir <项目> --task
 须实际核实原design_id及batch_id的commit/cancel，不按超时解锁，不虚构取消。commit恢复同时核验保存回读及允许范围。原failed历史不重写。
 
 ## 收口
+
+### 字体待办交接到PPTX
+
+当前插件缺少设置字体族能力时，继续完成支持的修改与保存；不把加粗、改字号当成更换字体。保存回读后主控根据实际预览记录字体交接，页码按含封面的实际页序，完整标题/句子逐字来自批准文字。已有人工待办不得仅凭页码自动迁移，须补全真实文字和同页图像证据。
+
+执行`record-canva-font-handoff --run-dir <项目> --task-id <任务> --handoff <审阅JSON>`，生成本任务`font_handoff.json`和`font_handoff.md`；无待办时items为空，不编造问题。JSON含controller_reviewed=true及items；每项含slide_index、text、unit_kind（title/sentence）、whole_unit_confirmed=true、reason、reference_visual（项目内原版同页图片或PDF）、canva_preview（项目内保存后同页插件预览）。脚本绑定正文与两份图像指纹，记录pending_pptx_review、target_font=null、canva_font_changed=false。不得记录未知原字体为已识别，不保存签名URL、token或完整插件载荷。仅readback_only时不能虚构字体外观判断；先补齐实际可查看预览，再记录需要视觉判断的交接。
+
+该清单不是执行授权，也不启动动画。用户提供最终可编辑PPTX并明确授权相近字体匹配后，阶段5自动读取清单，按完整文字与实际PPTX对象重新定位；Canva对象ID不能用作PPTX shape_id，重排页序或拆分文字需重新映射。以导出后的真实显示决定replace/no_change/blocked，并覆盖全部交接项。PPTX修复不回写Canva设计，不把在线待办改成已修复。规则见[阶段5规范](阶段5PPT教学动画规范.md)。
 
 全部26页等目标页数均已检查，必要修复保存并重新回读，才报告全部处理保存。说明设计链接、页数、实际修复、有效保留页、保存核对及未验证项；不要让少数不支持属性覆盖可完成工作，也不要把人工待办说成已修复。没有实际导出不写导出记录，Canva导出候选稿不自动覆盖基础课件与配套。

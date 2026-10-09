@@ -73,7 +73,8 @@ def inspect_pptx(path: str | Path) -> dict[str, Any]:
             "created_at": now_iso(), "notice": "Inspect page previews as well as objects. Images and groups may hide question/answer pairs; do not split or rebuild them."}
 
 
-def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, *, repair_fonts: bool = False) -> dict[str, Any]:
+def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, *, repair_fonts: bool = False,
+                    match_reference_fonts: bool = False) -> dict[str, Any]:
     root = Path(run_dir)
     state = read_state(root)
     if state['workflow']['mode'] != 'animation_only':
@@ -89,10 +90,18 @@ def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, 
     source = Path(info["source_path"])
     target = root / "_state/阶段5"
     target.mkdir(parents=True, exist_ok=True)
+    from .font_handoff import import_font_handoffs
+    handoff = import_font_handoffs(root, info, strict=match_reference_fonts)
+    repair_fonts = repair_fonts or match_reference_fonts
     write_json(target / "inspection.json", info)
     state["stage5_animation"] = {"status": "planning", "input": info["source_path"],
         "input_sha256": info["source_sha256"], "authorization_evidence": evidence,
         "font_repair_enabled": repair_fonts, "font_review_accepted": not repair_fonts,
+        "reference_font_matching_enabled": match_reference_fonts,
+        "reference_font_authorization_evidence": evidence if match_reference_fonts else None,
+        "font_handoff_import": "_state/阶段5/font_handoff_import.json",
+        "font_handoff_import_sha256": file_sha256(target / 'font_handoff_import.json'),
+        "font_handoff_pending_count": len(handoff['items']),
         "inspection": "_state/阶段5/inspection.json", "background_accepted": False,
         "execution_mode": "background_only"}
     if state["workflow"]["mode"] == "animation_only":
@@ -175,9 +184,14 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
         if set(replace) - used:
             raise ValidationError("replacement targets need explicit replacement effects; do not erase arbitrary timing")
     repairs = plan.get("font_repairs", [])
+    if visual_skipped and repairs:
+        raise ValidationError('without current PPTX visual verification preserve fonts and record unverified issues')
     validate_repairs(Path(task["input"]), slide_parts(task["input"]), repairs)
     if repairs and not task.get("font_repair_enabled"):
         raise ValidationError("font repair was not authorized; pure animation preserves every font")
+    _require_reference_authorization(task, repairs)
+    from .font_handoff import validate_handoff_resolutions
+    validate_handoff_resolutions(root, task, plan, info)
     if task.get("font_repair_enabled") and (not visual_skipped or repairs):
         if not isinstance(plan.get("font_review_evidence"), str) or not plan["font_review_evidence"].strip():
             raise ValidationError("actually inspect all page fonts, even when no repairs are needed")
@@ -185,6 +199,7 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
             if not isinstance(entry.get("font_observation"), str) or not entry["font_observation"].strip():
                 raise ValidationError("each page needs an actual font observation")
         _bind_font_evidence(root, repairs, bind=True)
+        _bind_font_evidence(root, plan.get('font_handoff_resolutions', []), bind=True)
     result = {**plan, "font_repairs": repairs, "created_at": now_iso()}
     if visual_skipped:
         result['visual_evidence_status'] = 'skipped_no_environment'
@@ -205,15 +220,26 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
 
 def _bind_font_evidence(root: Path, repairs: list[dict], *, bind: bool) -> None:
     for repair in repairs:
-        path = Path(repair["visual_evidence"])
-        path = path if path.is_absolute() else root / path
-        if not path.is_file():
-            raise ValidationError("font diagnosis needs a real local preview or visual observation record")
-        digest = file_sha256(path)
-        if bind:
-            repair["visual_evidence_sha256"] = digest
-        elif digest != repair.get("visual_evidence_sha256"):
-            raise ValidationError("font diagnosis evidence changed; review the plan again")
+        if repair.get('status') == 'blocked':
+            continue
+        from .font_handoff import local_evidence
+        keys = ['visual_evidence']
+        if 'mode' in repair or repair.get('font_file'):
+            keys += ['sample_review_evidence', 'font_file']
+        if repair.get('mode') == 'reference_match':
+            keys += ['reference_visual']
+        for key in keys:
+            path = local_evidence(root, repair.get(key))
+            digest = file_sha256(path)
+            if bind:
+                repair[key + '_sha256'] = digest
+            elif digest != repair.get(key + '_sha256'):
+                raise ValidationError('font diagnosis/reference/font file changed; review the plan again')
+
+
+def _require_reference_authorization(task, repairs):
+    if any(r.get('mode') == 'reference_match' for r in repairs) and not task.get('reference_font_matching_enabled'):
+        raise ValidationError('reference font matching requires explicit separate authorization')
 
 
 def export_animation_previews(run_dir: str | Path) -> dict[str, Any]:
@@ -359,7 +385,12 @@ def execute_animation(run_dir: str | Path) -> dict[str, Any]:
     repairs = plan.get("font_repairs", [])
     if repairs and not task.get("font_repair_enabled"):
         raise ValidationError("font repair was not authorized")
+    _require_reference_authorization(task, repairs)
+    validate_repairs(source, slide_parts(source), repairs)
+    from .font_handoff import validate_handoff_resolutions
+    validate_handoff_resolutions(root, task, plan, read_json(root / '_state/阶段5/inspection.json'))
     _bind_font_evidence(root, repairs, bind=False)
+    _bind_font_evidence(root, plan.get('font_handoff_resolutions', []), bind=False)
     pages = {s["page"] for s in plan["slides"] if s["effects"] or s.get("replace_targets")}
     task["status"] = "executing"
     task.pop("error", None)
@@ -475,6 +506,11 @@ def accept_background_review(run_dir: str | Path, review: dict[str, Any]) -> dic
     if task.get("status") not in {"waiting_background_review", "waiting_font_review"}:
         raise ValidationError("generate and verify output before background acceptance")
     validate_background_review(root,task,review)
+    plan = read_json(root / task['plan'])
+    _bind_font_evidence(root, plan.get('font_repairs', []), bind=False)
+    _bind_font_evidence(root, plan.get('font_handoff_resolutions', []), bind=False)
+    from .font_handoff import validate_handoff_resolutions
+    validate_handoff_resolutions(root, task, plan, read_json(root / '_state/阶段5/inspection.json'))
     write_json(root/"_state/阶段5/background_review.json",{**review,"created_at":now_iso()})
     task["background_accepted"] = True
     task["background_review_sha256"] = file_sha256(root/"_state/阶段5/background_review.json")
@@ -485,6 +521,13 @@ def accept_background_review(run_dir: str | Path, review: dict[str, Any]) -> dic
         task["font_review_accepted"]=True
         task["font_review_application"]="PowerPoint hidden Slide.Export (not actual slideshow or WPS)"
     _complete_reviews(state)
+    if task.get('status') == 'completed' and task.get('reference_font_matching_enabled'):
+        plan = read_json(root / task['plan'])
+        write_json(root / '_state/阶段5/font_handoff_results.json', {
+            'input_sha256': task['input_sha256'], 'output_sha256': task['output_sha256'],
+            'plan_sha256': task['plan_sha256'], 'background_review_sha256': task['background_review_sha256'],
+            'scope': 'exported_pptx_only_canva_design_unchanged',
+            'items': plan.get('font_handoff_resolutions', []), 'verified': True, 'created_at': now_iso()})
     write_state(root, state)
     return task
 
