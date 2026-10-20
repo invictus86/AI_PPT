@@ -94,10 +94,17 @@ def prepare_image_request(run_dir: str | Path, packet_path: str | Path, packet: 
     from .image_api_defaults import DEFAULT_IMAGE_API_MODEL, require_image_api_model
     from .image_routes import IMAGE_ROUTE_OPENAI_IMAGE_API, normalize_image_generation_route
     route = normalize_image_generation_route(packet.get('image_generation_route') or packet.get('execution_tool'))
-    if route != IMAGE_ROUTE_OPENAI_IMAGE_API:
-        raise ValidationError('正式生图只允许中转 API 的 gpt-image-2.5，不得切换内置 image_gen 或其他生图路线')
-    require_image_api_model(packet.get('image_api_input', {}).get('model', DEFAULT_IMAGE_API_MODEL))
+    if route == IMAGE_ROUTE_OPENAI_IMAGE_API:
+        require_image_api_model(packet.get('image_api_input', {}).get('model', DEFAULT_IMAGE_API_MODEL))
+    else:
+        from .image_fallback import validate_native_fallback
+        validate_native_fallback(run_dir, packet)
     with _ledger_lock(Path(run_dir), '.prepare.lock'):
+        if route != IMAGE_ROUTE_OPENAI_IMAGE_API and submitted:
+            entry_path = Path(run_dir) / LEDGER_RELPATH / (_entry_id(packet) + '.json')
+            entry = read_json(entry_path) if entry_path.exists() else {}
+            if entry.get('status') != '待生成':
+                raise ValidationError('该原生备用请求已提交或结果未知，先恢复原工具结果，不重复调用')
         return _prepare_image_request(run_dir, packet_path, packet, submitted=submitted)
 
 

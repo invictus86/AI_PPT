@@ -27,6 +27,12 @@ def logical_request_key(packet, config, *, force=False):
     return identity(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
 
+def image_route_target(root, packet):
+    """Only the same project/image is shared by relay and native handoff."""
+    value = {k: packet.get(k) for k in ('packet_id', 'purpose', 'slide_index', 'option_id', 'prompt', 'generation_basis')}
+    return 'image-route-target:' + path_identity(root) + ':' + identity(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
 def _recovered_item(root, receipt):
     evidence_path = root/receipt.get('api_evidence_path','__missing__')
     if not evidence_path.is_file():
@@ -47,11 +53,16 @@ def _recovered_item(root, receipt):
 
 
 def run_packet_job(root, packet_path, packet, config, *, force=False):
-    from .image_api import _request_packet_image, _write_api_output, _api_evidence_path
+    from .image_api import _request_packet_image, _write_api_output, _api_evidence_path, _request_options
     root = Path(root).resolve()
     key = logical_request_key(packet, config, force=force)
     receipt_path = root/'_state/阶段2/request_results'/f'{key}.json'
-    with resource_slot('image-target:' + path_identity(root) + ':' + key):
+    with resource_slot(image_route_target(root, packet)), resource_slot('image-target:' + path_identity(root) + ':' + key):
+        batch_value = packet.get('generation_batch_path')
+        if batch_value:
+            source_batch = read_json(root / batch_value)
+            if packet['packet_id'] in source_batch.get('native_fallback_packets', {}):
+                raise ValidationError('该图片已交接原生备用，不再向中转站重复提交')
         receipt = read_json(receipt_path) if receipt_path.exists() else {}
         recovered = _recovered_item(root, receipt)
         if recovered:
@@ -61,7 +72,8 @@ def run_packet_job(root, packet_path, packet, config, *, force=False):
             raise ValidationError(f'请求结果未知或返回文件不可用；禁止盲目重复付费：{key}，先核对证据并使用 resolve-image-request')
         evidence = _api_evidence_path(root, packet)
         receipt = {'status':'queued', 'request_key':key, 'packet_path':str(Path(packet_path).resolve().relative_to(root)),
-                   'api_evidence_path':str(evidence.relative_to(root)), 'created_at':now_iso()}
+                   'api_evidence_path':str(evidence.relative_to(root)), 'created_at':now_iso(),
+                   'request_options': _request_options(config, packet.get('image_api_input', {}))}
         write_json(receipt_path, receipt)
         # The caller owns its batch-local thread pool (up to six). There is no
         # account semaphore, global image lock, or shared rate-limit cooldown.
@@ -79,7 +91,9 @@ def run_packet_job(root, packet_path, packet, config, *, force=False):
             from .image_api import ImageApiHTTPError
             rejected = isinstance(exc, ImageApiHTTPError) and exc.http_status in {400,401,403,404,405,413,415,422,429}
             status = 'rejected' if rejected else ('returned_unusable' if response is not None else 'unknown')
-            receipt.update(status=status, interrupted_at=now_iso(), http_status=getattr(exc,'http_status',None))
+            receipt.update(status=status, interrupted_at=now_iso(), http_status=getattr(exc,'http_status',None),
+                           native_fallback_allowed=bool(getattr(exc, 'native_fallback_allowed', False)),
+                           failure_category=getattr(exc, 'failure_category', None))
             write_json(receipt_path, receipt)
             record_measurement(root, {'source':'image_api','record_id':'attempt:'+receipt['attempt_id'],
                 'stage':'stage2','operation':packet.get('purpose','image'),'started_at':receipt['submitted_at'],

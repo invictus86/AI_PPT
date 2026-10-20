@@ -76,6 +76,11 @@ def record_image_result(
     packet_path = Path(packet_file)
     packet = read_json(packet_path)
     generation_route = normalize_image_generation_route(packet.get("image_generation_route") or packet.get("execution_tool"))
+    if generation_route == IMAGE_ROUTE_CODEX_IMAGE_GEN and not dev_fixture:
+        from .image_fallback import validate_native_fallback
+        validate_native_fallback(root, packet)
+        if (canonical_policy or packet.get('canonical_policy') or 'preserve_api_raster') != 'preserve_api_raster':
+            raise ValidationError('原生备用图必须保留原始像素，不得通过裁切、缩放冒充达标')
     expected_tool = route_tool(generation_route)
     if packet.get("execution_tool") != expected_tool:
         raise ValidationError(f"packet.execution_tool must be {expected_tool}")
@@ -94,6 +99,11 @@ def record_image_result(
     suffix = image_path.suffix.lower()
     if suffix not in IMAGE_SUFFIXES:
         raise ValidationError(f"unsupported image suffix: {suffix}")
+    if generation_route == IMAGE_ROUTE_CODEX_IMAGE_GEN and not dev_fixture:
+        from PIL import Image
+        with Image.open(image_path) as native_image:
+            if native_image.format != 'PNG':
+                raise ValidationError('原生备用结果仍要求真实无损PNG，不能改扩展名冒充')
     resolved_canonical_policy = canonical_policy or packet.get("canonical_policy") or "preserve_api_raster"
     if resolved_canonical_policy not in CANONICAL_POLICIES:
         raise ValidationError(f"unsupported canonical image policy: {resolved_canonical_policy}")
@@ -673,6 +683,8 @@ def _write_image_gen_evidence(
         "image_gen_result_id": image_gen_result_id,
         "model": model,
         "image_gen_input": packet.get("image_gen_input"),
+        "native_fallback": packet.get("native_fallback"),
+        "unexposed_tool_parameters": ["model", "size", "quality", "output_format"],
         "output_image_path": _relative_or_text(root, image_path),
         "image_sha256": image_sha256,
         "created_at": now_iso(),

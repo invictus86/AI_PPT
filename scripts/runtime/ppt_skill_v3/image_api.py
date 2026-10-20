@@ -53,9 +53,15 @@ GRSAI_DRAW_COMPLETIONS_ENDPOINT = LEGACY_GRSAI_DRAW_COMPLETIONS_ENDPOINT
 
 
 class ImageApiHTTPError(ValidationError):
-    def __init__(self, status, message):
+    def __init__(self, status, message, *, fallback_allowed=None, failure_category=None):
         self.http_status = status
+        self.native_fallback_allowed = status in {401, 404, 405, 429} if fallback_allowed is None else fallback_allowed
+        self.failure_category = failure_category
         super().__init__(f'image API request failed with HTTP {status}: {message}')
+
+
+class MissingImageApiKey(ValidationError):
+    """No relay request has been sent; the host can use the native fallback."""
 
 
 @dataclass(frozen=True)
@@ -107,12 +113,6 @@ def load_image_api_config(
     for configured_model in (model, env_model):
         if configured_model is not None:
             require_image_api_model(configured_model)
-    key, key_source = _load_api_key(api_key=api_key, key_file=key_file)
-    if not isinstance(key, str) or not key.strip():
-        raise ValidationError(
-            f"{DEFAULT_IMAGE_API_KEY_ENV} is required for image API generation, "
-            "or configure a local key file with `python3 .skill/scripts/pptctl.py configure-image-api-key --stdin`"
-        )
     resolved_parallel = max_parallel if max_parallel is not None else DEFAULT_IMAGE_API_PARALLELISM
     resolved_timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_IMAGE_API_TIMEOUT_SECONDS
     if resolved_parallel < 1:
@@ -125,6 +125,12 @@ def load_image_api_config(
         if configured_quality is not None and configured_quality != 'high':
             raise ValidationError('正式生图质量固定为high，禁止通过参数或环境变量降低质量')
     env_response_format = os.environ.get(DEFAULT_IMAGE_API_RESPONSE_FORMAT_ENV)
+    key, key_source = _load_api_key(api_key=api_key, key_file=key_file)
+    if not isinstance(key, str) or not key.strip():
+        raise MissingImageApiKey(
+            f"{DEFAULT_IMAGE_API_KEY_ENV} is required for image API generation, "
+            "or configure a local key file with `python3 .skill/scripts/pptctl.py configure-image-api-key --stdin`"
+        )
     return ImageApiConfig(
         api_key=key,
         base_url=(base_url or os.environ.get(DEFAULT_IMAGE_API_BASE_URL_ENV) or DEFAULT_IMAGE_API_BASE_URL).rstrip("/") + "/",
@@ -190,7 +196,7 @@ def run_image_api_batch(
     batch = read_json(batch_path)
     route = normalize_image_generation_route(batch.get("image_generation_route") or batch.get("execution_tool"))
     if route != IMAGE_ROUTE_OPENAI_IMAGE_API:
-        raise ValidationError("正式生图只允许 openai_image_api / gpt-image-2.5，禁止改用内置 image_gen 或其他路线")
+        raise ValidationError("中转执行器只执行openai_image_api；原生备用任务须由主控调用image_gen工具")
     if batch.get("stage") != "stage2":
         raise ValidationError("run-image-api-batch only supports formal stage2 image batches")
     packet_paths = [_resolve_path(root, path) for path in batch.get("packet_paths", [])]
@@ -200,11 +206,14 @@ def run_image_api_batch(
     completed = batch.get("results") if isinstance(batch.get("results"), dict) else {}
     work_items: list[tuple[Path, dict[str, Any]]] = []
     skipped: list[str] = []
+    native_handoffs = batch.get('native_fallback_packets', {})
     for packet_path in packet_paths:
         packet = read_json(packet_path)
         _request_options(config, packet.get("image_api_input", {}))
         packet_id = packet.get("packet_id")
         require_current_image_style(root, packet)
+        if packet.get('packet_id') in native_handoffs:
+            continue  # A handed-off image must not be resubmitted to the relay.
         prior = completed.get(packet_id, {})
         prompt_digest = hashlib.sha256(packet["prompt"].encode()).hexdigest()
         expected = batch.get("packet_prompt_hashes", {}).get(packet_id)
@@ -285,6 +294,15 @@ def run_image_api_batch(
         "key_source": config.key_source, "records": recorded, "failures": failed,
         "started_at": started_at, "completed_at": now_iso(),
     }
+    if failed or native_handoffs:
+        from .image_fallback import prepare_native_fallback
+        try:
+            report['native_fallback'] = prepare_native_fallback(root, batch_path)
+            report['next_required_action'] = report['native_fallback']['next_required_action']
+            if report['native_fallback']['packet_paths']:
+                report['status'] = 'awaiting_native_image_generation'
+        except (ValidationError, OSError) as exc:
+            report['native_fallback'] = {'status': 'blocked', 'error': str(exc)}
     write_json(report_path, report)
     return report
 
@@ -474,7 +492,17 @@ def _parse_image_api_response(
     request_id = headers.get("x-request-id") or headers.get("X-Request-Id")
     raw_text = raw.decode("utf-8", errors="replace")
     if status != 200:
-        raise ImageApiHTTPError(status, '明确HTTP错误响应；计费情况仍以服务证据为准')
+        # Inspect provider codes locally; never persist an unredacted error body.
+        try:
+            error = json.loads(raw_text).get('error', {})
+        except (ValueError, AttributeError):
+            error = {}
+        code = str(error.get('code') or error.get('type') or '').lower() if isinstance(error, dict) else ''
+        policy = any(word in raw_text.lower() for word in ('content_policy', 'moderation', 'safety', 'content_filter', '内容安全'))
+        unavailable = code in {'model_not_found', 'invalid_api_key', 'insufficient_quota', 'rate_limit_exceeded', 'model_unavailable'}
+        allowed = not policy and (status in {401, 404, 405, 429} or status in {400, 403, 422} and unavailable)
+        raise ImageApiHTTPError(status, '明确HTTP错误响应；计费情况仍以服务证据为准',
+                                fallback_allowed=allowed, failure_category='content_policy' if policy else 'relay_rejection')
     content_type = headers.get("content-type") or headers.get("Content-Type") or ""
     if "text/event-stream" in content_type or raw_text.lstrip().startswith("data:"):
         return _parse_grsai_event_stream_response(status, headers, raw_text, elapsed, endpoint, deadline)

@@ -42,5 +42,5 @@ def require_image_api_model(model: object) -> None:
     if model != REQUIRED_IMAGE_API_MODEL:
         raise ValidationError(
             "正式生图只允许使用 gpt-image-2.5；禁止其他模型或分组。"
-            "该分组不可用时停止并报告，不得切换备用分组或生图路线。"
+            "中转分组不可用时只能按生图备用协议交接GPT原生工具，不得改用其他中转模型或分组。"
         )

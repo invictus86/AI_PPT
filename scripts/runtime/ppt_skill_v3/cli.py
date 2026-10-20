@@ -142,6 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_prompt_parser = subparsers.add_parser("prepare-image-request", help="生图调用前保存本次提示词快照，内置工具结果须用返回的快照路径登记。")
     prepare_prompt_parser.add_argument("--run-dir", required=True)
     prepare_prompt_parser.add_argument("--packet", required=True)
+    fallback_parser = subparsers.add_parser("prepare-native-fallback", help="仅将已核实中转故障且无可恢复结果的图片交接GPT原生工具。")
+    fallback_parser.add_argument("--run-dir", required=True)
+    fallback_parser.add_argument("--batch", required=True)
+    fallback_parser.add_argument("--evidence-file", help="主控核实的中转不可用、无可恢复结果证据JSON；不覆盖在途或未知请求。")
     refresh_prompts_parser = subparsers.add_parser("refresh-image-prompts", help="从已有请求和图片恢复提示词文档，不重新生图。")
     refresh_prompts_parser.add_argument("--run-dir", required=True)
     refresh_prompts_parser.add_argument("--output-dir")
@@ -582,8 +586,18 @@ def _execute(args, parser):
         if not path.is_absolute():
             path = Path(args.run_dir) / path
         snapshot_path, packet = prepare_image_request(args.run_dir, path, read_json(path))
-        print(json.dumps({"packet_path": str(snapshot_path), "prompt": packet["prompt"]}, ensure_ascii=False))
+        output = {"packet_path": str(snapshot_path), "prompt": packet["prompt"]}
+        if packet.get('image_generation_route') == 'codex_image_gen':
+            from .image_fallback import native_tool_request
+            output.update(native_tool_request(args.run_dir, packet))
+        print(json.dumps(output, ensure_ascii=False))
         return 0
+    if args.command == "prepare-native-fallback":
+        from .image_fallback import prepare_native_fallback
+        report = prepare_native_fallback(args.run_dir, args.batch,
+                                         evidence=read_json(args.evidence_file) if args.evidence_file else None)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0 if report['packet_paths'] else 1
     if args.command == "refresh-image-prompts":
         path = export_prompt_document(args.run_dir, args.output_dir) if args.output_dir else refresh_prompt_delivery(args.run_dir)
         print(json.dumps({"document": str(path)}, ensure_ascii=False))
@@ -757,17 +771,37 @@ def _execute(args, parser):
         print(json.dumps({"status": "stage2_remaining_packets_created", "packets": [str(path) for path in packets]}, ensure_ascii=False))
         return 0
     if args.command == "run-image-api-batch":
-        config = load_image_api_config(
-            base_url=args.base_url,
-            model=args.model,
-            size=args.size,
-            quality=args.quality,
-            response_format=args.response_format,
-            max_parallel=args.max_parallel,
-            timeout_seconds=args.timeout_seconds,
-            key_file=args.key_file,
-        )
         batch_path = args.batch or default_batch_path_for_stage(args.run_dir, args.stage)
+        from .image_api import MissingImageApiKey
+        try:
+            config = load_image_api_config(
+                base_url=args.base_url, model=args.model, size=args.size, quality=args.quality,
+                response_format=args.response_format, max_parallel=args.max_parallel,
+                timeout_seconds=args.timeout_seconds, key_file=args.key_file,
+            )
+        except MissingImageApiKey:
+            if args.dry_run:
+                raise
+            from .image_fallback import prepare_native_fallback
+            from .image_api import _request_options
+            # Validate every original override even though no relay key exists.
+            preflight = load_image_api_config(
+                api_key='unsubmitted-preflight-only', base_url=args.base_url, model=args.model,
+                size=args.size, quality=args.quality, response_format=args.response_format,
+                max_parallel=args.max_parallel, timeout_seconds=args.timeout_seconds, key_file=args.key_file,
+            )
+            batch_file = Path(args.run_dir) / batch_path
+            original_options = {}
+            for value in read_json(batch_file)['packet_paths']:
+                source = read_json(Path(args.run_dir) / value)
+                original_options[source['packet_id']] = _request_options(preflight, source.get('image_api_input', {}))
+            report = prepare_native_fallback(args.run_dir, batch_path, evidence={
+                'controller_reviewed': True, 'relay_unavailable': True,
+                'resolution': 'confirmed_no_result', 'reason': '本机未配置中转密钥，本次未发起中转请求',
+                'request_options_by_packet': original_options,
+            })
+            print(json.dumps({'status': report['status'], 'native_fallback': report}, ensure_ascii=False))
+            return 0 if report['packet_paths'] else 1
         report = run_image_api_batch(args.run_dir, batch_path, config=config, force=args.force, dry_run=args.dry_run)
         print(json.dumps({"status": report["status"], "report": report}, ensure_ascii=False))
         return 0 if report["status"] in {"completed", "dry_run"} else 1

@@ -299,7 +299,7 @@ def _route_input(route: str) -> dict[str, Any]:
                 "mode": "generate",
                 "tool": "image_gen.imagegen",
                 "size": DEFAULT_IMAGE_API_SIZE,
-                "quality": "auto",
+                "quality": DEFAULT_IMAGE_API_QUALITY,
                 "output_format": "png",
                 "project_bound": True,
                 **size_contract,
