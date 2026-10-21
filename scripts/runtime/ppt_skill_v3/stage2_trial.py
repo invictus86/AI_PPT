@@ -148,11 +148,11 @@ def dispatch_stage2_trial_first5_packets(
     if not dispatch_slide_indices:
         refresh_prompt_delivery(root)
         summary = write_stage2_trial_summary(root, None)
-        state["status"] = "waiting_user_trial_first5_confirmation"
-        state["required_actor"] = "user"
-        state["quality"]["stage2_trial_first5"] = "pending_user_review"
+        state["status"] = "stage2_trial_first5_result_recorded"
+        state["required_actor"] = "main_controller"
+        state["quality"]["stage2_trial_first5"] = "pending_controller_text_review"
         state["user_artifacts"]["stage2_trial_first5"] = str(summary.relative_to(root))
-        state["next_required_action"] = "等待用户确认阶段2B试样；本次试样全部复用已有有效图片，没有重复生图"
+        state["next_required_action"] = "试样全部复用已有有效图片；主控仍须逐张对照阶段1文字检查并record-stage2-visual-qa记录通过，再展示给用户"
         write_state(root, state)
         append_event(
             root,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Iterable
 
 FORBIDDEN_PRODUCTION_SOURCES = {
@@ -982,7 +983,8 @@ def validate_stage2_aesthetic_review(data: Any) -> dict[str, Any]:
     _reject_forbidden_fields(review)
     _require_fields(
         review,
-        ["schema_version", "overall_status", "review_scope", "checks", "slide_findings", "rework_recommendation"],
+        ["schema_version", "overall_status", "review_scope", "checks", "slide_findings", "rework_recommendation",
+         "text_review_basis", "text_reviews"],
         "stage2_aesthetic_review",
     )
     if review["schema_version"] != "1.0":
@@ -1002,6 +1004,35 @@ def validate_stage2_aesthetic_review(data: Any) -> dict[str, Any]:
             raise ValidationError(f"stage2_aesthetic_review.checks.{key} is invalid")
     if review["overall_status"] == "pass" and any(checks[key] != "pass" for key in STAGE2_QA_CHECK_KEYS):
         raise ValidationError("stage2_aesthetic_review cannot pass while checks require rework")
+    basis = review["text_review_basis"]
+    required_text_sources = {"_state/阶段1/content.json", "阶段1_规划确认/每页干净逐字稿.md"}
+    if (not isinstance(basis, dict) or not required_text_sources.issubset(basis)
+            or any(not isinstance(v, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", v) for v in basis.values())):
+        raise ValidationError("text_review_basis must bind the Stage 1 content and clean transcript")
+    text_reviews = review["text_reviews"]
+    if not isinstance(text_reviews, list) or not text_reviews:
+        raise ValidationError("per-image text_reviews are required")
+    for row in text_reviews:
+        if not isinstance(row, dict) or type(row.get("slide_index")) is not int or row["slide_index"] < 1:
+            raise ValidationError("each text review requires a slide_index")
+        for key in ("image_path", "image_sha256"):
+            _require_string(row, key, "text_review")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", row["image_sha256"]):
+            raise ValidationError("text review requires the actual image SHA256")
+        if "option_id" in row and row["option_id"] not in COVER_OPTION_IDS:
+            raise ValidationError("invalid text review option_id")
+        if not isinstance(row.get("evidence"), str):
+            raise ValidationError("text review evidence must be text")
+        if not isinstance(row.get("reference_text"), list) or any(not isinstance(t, str) for t in row["reference_text"]):
+            raise ValidationError("text review requires Stage 1 reference_text")
+        if row.get("status") not in STAGE2_QA_STATUSES or type(row.get("controller_reviewed")) is not bool:
+            raise ValidationError("text review requires status and controller_reviewed")
+        if row["status"] == "pass":
+            if not row["controller_reviewed"]:
+                raise ValidationError("per-image text pass requires actual controller review")
+            _require_string(row, "evidence", "text_review")
+        if review["overall_status"] == "pass" and row["status"] != "pass":
+            raise ValidationError("every image must pass proofreading before overall pass")
     findings = review.get("slide_findings")
     if not isinstance(findings, list):
         raise ValidationError("stage2_aesthetic_review.slide_findings must be a list")

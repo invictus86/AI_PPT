@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PPT Skill v3 Stage2 Aesthetic Review",
   "type": "object",
-  "required": ["schema_version", "overall_status", "review_scope", "checks", "slide_findings", "rework_recommendation"],
+  "required": ["schema_version", "overall_status", "review_scope", "checks", "slide_findings", "rework_recommendation", "text_review_basis", "text_reviews"],
   "properties": {
     "schema_version": { "const": "1.0" },
     "overall_status": { "type": "string", "enum": ["pass", "needs_rework"] },
@@ -35,6 +35,32 @@
       },
       "additionalProperties": true
     },
+    "text_review_basis": {
+      "type": "object", "minProperties": 2,
+      "required": ["_state/阶段1/content.json", "阶段1_规划确认/每页干净逐字稿.md"],
+      "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+    },
+    "text_reviews": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["slide_index", "image_path", "image_sha256", "reference_text", "controller_reviewed", "status", "evidence"],
+        "properties": {
+          "slide_index": { "type": "integer", "minimum": 1 },
+          "option_id": { "enum": ["A", "B", "C", "D"] },
+          "image_path": { "type": "string", "minLength": 1 },
+          "image_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "reference_text": { "type": "array", "items": { "type": "string" } },
+          "controller_reviewed": { "type": "boolean" },
+          "status": { "enum": ["pass", "needs_rework"] },
+          "evidence": { "type": "string" }
+        },
+        "allOf": [{
+          "if": { "properties": { "status": { "const": "pass" } } },
+          "then": { "properties": { "controller_reviewed": { "const": true }, "evidence": { "pattern": "\\S" } } }
+        }]
+      }
+    },
     "slide_findings": { "type": "array", "items": { "type": "object" } },
     "rework_recommendation": {
       "type": "object",
@@ -46,5 +72,9 @@
       "additionalProperties": true
     }
   },
+  "allOf": [{
+    "if": { "properties": { "overall_status": { "const": "pass" } } },
+    "then": { "properties": { "text_reviews": { "items": { "properties": { "status": { "const": "pass" } } } } } }
+  }],
   "additionalProperties": true
 }

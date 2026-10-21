@@ -4,11 +4,17 @@ from pathlib import Path
 from typing import Any
 
 from .events import append_event
-from .json_io import read_json
+from .json_io import read_json, write_json
 from .planning_assets import save_stage2_aesthetic_review, stage2_aesthetic_review_path
 from .stage_docs import sync_stage_docs
 from .state import read_state, write_state
 from .validation import ValidationError, validate_stage2_aesthetic_review
+from .stage2_text_review import require_current_text_reviews
+from .time_utils import now_iso
+
+
+def scoped_review_path(run_dir: str | Path, scope: str) -> Path:
+    return stage2_aesthetic_review_path(run_dir).with_name(f"stage2_aesthetic_review.{scope}.json")
 
 
 def load_stage2_aesthetic_review(run_dir: str | Path) -> dict[str, Any]:
@@ -24,9 +30,12 @@ def record_stage2_aesthetic_review(run_dir: str | Path, review_file: str | Path)
     if not source.exists() or not source.is_file():
         raise FileNotFoundError(f"stage2 aesthetic review not found: {source}")
     review = validate_stage2_aesthetic_review(read_json(source))
+    require_current_text_reviews(root, review)
     if review["review_scope"] == "full_image_deck":
         from .thematic_workflow import review_basis
         review["artifact_basis"] = review_basis(root, "deck")
+    review["recorded_at"] = now_iso()
+    write_json(scoped_review_path(root, review["review_scope"]), review)
     save_stage2_aesthetic_review(root, review)
 
     scope = review["review_scope"]
@@ -54,12 +63,14 @@ def record_stage2_aesthetic_review(run_dir: str | Path, review_file: str | Path)
     else:
         if scope == "trial_first5":
             state["quality"]["stage2_trial_first5"] = "qa_passed"
-            if state["status"] != "waiting_user_trial_first5_confirmation":
-                state["status"] = "stage2_trial_first5_qa_passed"
-                state["required_actor"] = "main_controller"
-                state["next_required_action"] = "阶段2B试样 QA 已通过，可交给用户确认"
+            state["status"] = "waiting_user_trial_first5_confirmation"
+            state["required_actor"] = "user"
+            state["next_required_action"] = "试样已逐张对照阶段1文字检查并记录通过，展示前5页等待用户确认"
         elif scope == "cover_options":
             state["quality"]["stage2_cover_options"] = "qa_passed"
+            state["status"] = "waiting_user_cover_style_selection"
+            state["required_actor"] = "user"
+            state["next_required_action"] = "四张封面已逐张对照阶段1文字检查并记录通过，展示规划摘要和四封面等待用户选择"
         else:
             state["quality"]["stage2"] = "qa_passed"
             state["next_required_action"] = "阶段2视觉 QA 已通过，完成实际内容深度审阅后由主控锁定全稿并连续输出配套"
@@ -72,10 +83,15 @@ def record_stage2_aesthetic_review(run_dir: str | Path, review_file: str | Path)
 
 
 def require_stage2_aesthetic_review(run_dir: str | Path, *, scope: str) -> dict[str, Any]:
-    review = load_stage2_aesthetic_review(run_dir)
+    path = scoped_review_path(run_dir, scope)
+    if not path.is_file():
+        raise ValidationError(f"{scope}: per-image proofreading and visual QA must be recorded before proceeding")
+    review = validate_stage2_aesthetic_review(read_json(path))
     if review["review_scope"] != scope or review["overall_status"] != "pass":
-        raise ValidationError("current full-deck visual QA must pass")
-    from .thematic_workflow import review_basis
-    if review.get("artifact_basis") != review_basis(Path(run_dir), "deck"):
-        raise ValidationError("visual QA is stale; review the actual current PDF/pages")
+        raise ValidationError(f"{scope}: current per-image proofreading and visual QA must pass")
+    require_current_text_reviews(run_dir, review)
+    if scope == "full_image_deck":
+        from .thematic_workflow import review_basis
+        if review.get("artifact_basis") != review_basis(Path(run_dir), "deck"):
+            raise ValidationError("visual QA is stale; review the actual current PDF/pages")
     return review

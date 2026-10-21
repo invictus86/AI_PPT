@@ -313,11 +313,11 @@ def record_image_result(
         state["status"] = "cover_option_result_recorded"
         if cover_option_results_complete(root):
             review = write_cover_options_review(root)
-            state["status"] = "waiting_user_cover_style_selection"
-            state["required_actor"] = "user"
+            state["status"] = "cover_option_result_recorded"
+            state["required_actor"] = "main_controller"
             state["user_artifacts"]["stage2_cover_options"] = str(review.relative_to(root))
-            state["quality"]["stage2_cover_options"] = "pending_user_review"
-            state["next_required_action"] = "等待用户从四张封面候选中选择整套PPT风格"
+            state["quality"]["stage2_cover_options"] = "pending_controller_text_review"
+            state["next_required_action"] = "主控逐张对照阶段1每页干净逐字稿检查四封面文字，record-stage2-visual-qa记录全部通过后再展示给用户"
             refresh_prompt_delivery(root)
         else:
             state["next_required_action"] = "继续记录剩余封面候选图片结果"
@@ -325,11 +325,11 @@ def record_image_result(
         state["status"] = "stage2_trial_first5_result_recorded"
         if stage2_trial_first5_results_complete(root, batch_path):
             summary = write_stage2_trial_summary(root, batch_path)
-            state["status"] = "waiting_user_trial_first5_confirmation"
-            state["required_actor"] = "user"
+            state["status"] = "stage2_trial_first5_result_recorded"
+            state["required_actor"] = "main_controller"
             state["user_artifacts"]["stage2_trial_first5"] = str(summary.relative_to(root))
-            state["quality"]["stage2_trial_first5"] = "pending_user_review"
-            state["next_required_action"] = "等待用户确认阶段2B试样；有问题则返工阶段2设计规划和提示词"
+            state["quality"]["stage2_trial_first5"] = "pending_controller_text_review"
+            state["next_required_action"] = "主控逐张对照阶段1每页干净逐字稿检查试样（含封面），record-stage2-visual-qa记录全部通过后再展示给用户"
             refresh_prompt_delivery(root)
         else:
             state["next_required_action"] = "继续记录剩余阶段2B试样图片结果"

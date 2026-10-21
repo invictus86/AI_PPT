@@ -16,6 +16,7 @@ from .image_style import result_is_current
 from .json_io import read_json, write_json
 from .paths import decision_path, decisions_dir, existing_decision_path
 from .stage2_trial import stage2_trial_first5_results_complete
+from .stage2_visual_qa import require_stage2_aesthetic_review
 from .state import read_state, set_stage3_lesson_plan_required, stage3_lesson_plan_required, write_state
 from .validation import (
     ValidationError,
@@ -92,6 +93,7 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["next_required_action"] = "主控大模型修订阶段1页面规划、每页干净逐字稿、PPT一致性或图片风格"
     elif decision_type == "stage2_cover_options_ready_for_user_review":
         _require_cover_options_ready(run_dir)
+        require_stage2_aesthetic_review(run_dir, scope="cover_options")
         state["current_stage"] = "stage2"
         state["status"] = "waiting_user_cover_style_selection"
         state["required_actor"] = "user"
@@ -100,6 +102,7 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["next_required_action"] = "展示规划摘要和四封面；用户认可当前规划、选封面并授权前5页试做"
     elif decision_type == "approve_stage2_cover_style_start_image_deck":
         _require_state_status(state, "waiting_user_cover_style_selection", decision_type)
+        require_stage2_aesthetic_review(run_dir, scope="cover_options")
         from .thematic_workflow import require_step, require_content_review
         require_step(state, 2)
         require_content_review(run_dir, "planning")
@@ -128,6 +131,7 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
             raise ValidationError("stage2 cover style must be confirmed before trial first5 review")
         if not stage2_trial_first5_results_complete(run_dir):
             raise ValidationError("stage2 trial first5 selected images must be complete and current before user review")
+        require_stage2_aesthetic_review(run_dir, scope="trial_first5")
         state["current_stage"] = "stage2"
         state["status"] = "waiting_user_trial_first5_confirmation"
         state["required_actor"] = "user"
@@ -136,6 +140,7 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["next_required_action"] = "等待用户确认阶段2B试样；有问题则返工阶段2设计规划和提示词"
     elif decision_type == "approve_stage2_trial_first5_continue_remaining":
         _require_state_status(state, "waiting_user_trial_first5_confirmation", decision_type)
+        require_stage2_aesthetic_review(run_dir, scope="trial_first5")
         from .thematic_workflow import require_step
         require_step(state, 3)
         if not stage2_trial_first5_results_complete(run_dir):
@@ -162,7 +167,6 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         stage2_pdf = _require_stage2_image_pdf(run_dir, state, "actual full image PDF is required")
         require_content_review(run_dir, "planning")
         require_content_review(run_dir, "deck")
-        from .stage2_visual_qa import require_stage2_aesthetic_review
         require_stage2_aesthetic_review(run_dir, scope="full_image_deck")
         locked_source = {"source_mode": "stage2_image_deck", "source_path": stage2_pdf,
                          "source_sha256": _file_sha256(Path(run_dir) / stage2_pdf),

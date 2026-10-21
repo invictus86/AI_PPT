@@ -22,12 +22,17 @@ def create_stage2_visual_qa_draft(
     findings = [{"issue": "draft_requires_controller_aesthetic_review"}]
     findings.extend({"issue": f"doctor: {issue}"} for issue in doctor.get("issues", []))
     findings.extend({"issue": f"doctor_warning: {warning}"} for warning in doctor.get("warnings", []))
+    from .stage2_text_review import text_review_inputs
+    text_basis, text_rows = text_review_inputs(root, scope)
     draft = {
         "schema_version": "1.0",
         "overall_status": "needs_rework",
         "review_scope": scope,
         "checks": {key: "needs_rework" for key in sorted(STAGE2_QA_CHECK_KEYS)},
         "slide_findings": findings,
+        "text_review_basis": text_basis,
+        "text_reviews": [{**row, "controller_reviewed": False, "status": "needs_rework", "evidence": ""}
+                         for row in text_rows],
         "rework_recommendation": {
             "target": "stage2_design_plan",
             "reason": "Runtime draft only lists required review items; controller must perform visual judgment before recording QA.",

@@ -246,6 +246,15 @@ def _check_stage1_stage2_consistency(root: Path, issues: list[str], warnings: li
     elif current_stage == "stage2" and status in {"waiting_user_trial_first5_confirmation", "full_deck_pending_controller_qa"}:
         warnings.append("阶段2已进入用户确认相关状态，但尚未记录 stage2_aesthetic_review.json")
 
+    scope = {"waiting_user_cover_style_selection": "cover_options",
+             "waiting_user_trial_first5_confirmation": "trial_first5"}.get(status)
+    if scope and current_stage == "stage2":
+        from .stage2_visual_qa import require_stage2_aesthetic_review
+        try:
+            require_stage2_aesthetic_review(root, scope=scope)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            issues.append(f"{scope} 展示前必须逐张文字检查并记录通过：{exc}")
+
 
 def _check_image_style_entry(root: Path, current_stage: Any, confirmed: dict[str, Any], issues: list[str], warnings: list[str]) -> None:
     new = root / "阶段1_规划确认" / "图片风格.md"
