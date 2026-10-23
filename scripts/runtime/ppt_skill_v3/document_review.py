@@ -57,7 +57,7 @@ def render_document(source, directory, *, timeout=600):
                 with tempfile.TemporaryDirectory(prefix='ppt_word_background_') as tmp:
                     pdf = Path(tmp)/'layout.pdf'; evidence = Path(tmp)/'evidence.json'
                     try:
-                        process = subprocess.run([shell,'-NoProfile','-NonInteractive','-File',str(Path(__file__).with_name('background_word.ps1')),
+                        process = subprocess.run([shell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(Path(__file__).with_name('background_word.ps1')),
                             '-InputDocx',str(source),'-OutputPdf',str(pdf),'-EvidenceJson',str(evidence)],
                             capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,
                             creationflags=subprocess.CREATE_NO_WINDOW)

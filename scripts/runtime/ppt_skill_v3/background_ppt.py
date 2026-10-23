@@ -390,7 +390,7 @@ def _render_hidden(source, directory, *, timeout=600):
         payload=Path(tmp)/'fonts.json';write_json(payload,fonts)
         evidence=Path(tmp)/'renderer_evidence.json'
         try:
-            result=subprocess.run([shell,'-NoProfile','-NonInteractive','-File',str(Path(__file__).with_name('background_render.ps1')),
+            result=subprocess.run([shell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(Path(__file__).with_name('background_render.ps1')),
                 '-InputPptx',str(render_source),'-OutputDir',str(directory),'-FontsJson',str(payload),'-EvidenceJson',str(evidence)],
                 capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,
                 creationflags=subprocess.CREATE_NO_WINDOW)
