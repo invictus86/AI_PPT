@@ -32,9 +32,26 @@
           "effects",
           "manual_issues",
           "content_roles_reviewed",
-          "visibility_rules"
+          "visibility_rules",
+          "sequence_evidence",
+          "teaching_units"
         ],
         "properties": {
+          "sequence_evidence": {"type":"string","minLength":1,"pattern":"\\S"},
+          "teaching_units": {
+            "type":"array",
+            "items": {
+              "type":"object",
+              "required":["shape_ids","reveal_click","purpose","retain_ids"],
+              "properties": {
+                "shape_ids":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"integer","minimum":1}},
+                "reveal_click":{"type":"integer","minimum":0},
+                "purpose":{"type":"string","minLength":1,"pattern":"\\S"},
+                "retain_ids":{"type":"array","uniqueItems":true,"items":{"type":"integer","minimum":1}}
+              },
+              "additionalProperties":false
+            }
+          },
           "page": {
             "type": "integer",
             "minimum": 1
@@ -61,6 +78,10 @@
                 "separable"
               ],
               "properties": {
+                "effect":{"const":"fade"},
+                "role":{"type":"string","minLength":1},
+                "reason":{"type":"string","minLength":1},
+                "click_group":{"type":"string","minLength":1},
                 "shape": {
                   "type": "integer",
                   "minimum": 1
@@ -83,7 +104,8 @@
                   "minimum": 0.2,
                   "maximum": 1.2
                 }
-              }
+              },
+              "additionalProperties":false
             }
           },
           "manual_issues": {

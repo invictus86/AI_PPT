@@ -477,6 +477,53 @@ def write_state_deck(source,target,pages):
     return mapping
 
 
+def validate_teaching_intent(entry, valid_ids):
+    """Validate an independent teaching-unit contract inside the existing plan.
+
+    The controller supplies order from visible numbering, task dependencies and
+    page/media review. Never infer this expected order from the effects list.
+    """
+    if not isinstance(entry.get('sequence_evidence'),str) or not entry['sequence_evidence'].strip():
+        raise ValidationError('每页需sequence_evidence，说明来自原页编号/推理关系的独立顺序依据；静态页说明保留理由')
+    units=entry.get('teaching_units')
+    if not isinstance(units,list):
+        raise ValidationError('每页需teaching_units；按教学顺序声明对象、预期点击、目的及必要参照')
+    seen=set();previous=0
+    for unit in units:
+        if not isinstance(unit,dict) or set(unit)!={'shape_ids','reveal_click','purpose','retain_ids'}:
+            raise ValidationError('教学单元需且仅含shape_ids/reveal_click/purpose/retain_ids')
+        ids=unit['shape_ids'];retain=unit['retain_ids'];step=unit['reveal_click']
+        for name,values in [('shape_ids',ids),('retain_ids',retain)]:
+            if not isinstance(values,list) or any(type(sid) is not int or sid not in valid_ids for sid in values) or len(set(values))!=len(values):
+                raise ValidationError('教学单元'+name+'需互异的实际顶层对象ID')
+        if not ids or seen.intersection(ids):
+            raise ValidationError('教学单元对象不能为空或重复归属；组合内成员不能当作独立目标')
+        if type(step) is not int or step<previous or step<0:
+            raise ValidationError('教学单元须按独立预期点击顺序排列，不能由错误效果顺序反推')
+        if not isinstance(unit['purpose'],str) or not unit['purpose'].strip():
+            raise ValidationError('每个教学单元需具体信息或操作目的，不能用装饰凑点击')
+        previous=step;seen.update(ids)
+    return units
+
+
+def check_teaching_intent(actual, entry):
+    valid=set(actual['states'][-1]['visible_ids'])
+    units=validate_teaching_intent(entry,valid)
+    effects={e['shape_id']:e for e in actual['effects']}
+    covered={sid for u in units for sid in u['shape_ids']}
+    if set(effects)-covered:
+        raise ValidationError('teaching_units需覆盖全部实际动画对象，包含保留的已有动画')
+    for unit in units:
+        step=unit['reveal_click']
+        if step>=len(actual['states']) or any(effects.get(sid,{}).get('click',0)!=step for sid in unit['shape_ids']):
+            raise ValidationError(f"第{actual['page']}页实际动画与独立教学单元预期点击不一致")
+        if not set(unit['retain_ids'])<=set(actual['states'][step]['visible_ids']):
+            raise ValidationError('教学单元出现时缺少必要题干、例证或比较参照')
+        durations=[effects[sid]['duration'] for sid in unit['shape_ids'] if sid in effects]
+        if durations and max(durations)-min(durations)>.001:
+            raise ValidationError('同一教学单元的同步淡入应同时完成；不要只检查同开始')
+
+
 def check_visibility_rules(pages,plan):
     if len(pages)!=len(plan['slides']):raise ValidationError('后台页数与计划不一致')
     for actual,entry in zip(pages,plan['slides']):
@@ -492,6 +539,7 @@ def check_visibility_rules(pages,plan):
             if rule['role']=='answer' and step==0:raise ValidationError('答案对象不能承诺初始可见；比较材料应明确标为prompt')
             seen.add(sid)
             if reveal.get(sid,0)!=step:raise ValidationError(f"第{actual['page']}页对象{sid}的实际出现点击与语义契约不一致")
+        check_teaching_intent(actual,entry)
         # Compare the serialized behavior for each new effect, including grouping
         # and duration, to the controller's plan.
         byid={e['shape_id']:e for e in actual['effects']}

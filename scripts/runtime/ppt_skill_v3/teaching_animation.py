@@ -183,6 +183,8 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
         if not isinstance(effects, list) or not isinstance(replace, list) or len(replace) != len(set(replace)):
             raise ValidationError("effects and distinct replace_targets are required")
         valid_shapes = {s["shape"]: s for s in actual["shapes"]}
+        from .background_ppt import validate_teaching_intent
+        validate_teaching_intent(entry, {s['shape_id'] for s in actual['shapes']})
         for shape in replace:
             if type(shape) is not int or shape not in valid_shapes:
                 raise ValidationError("replacement target does not exist")
@@ -190,6 +192,9 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
                 raise ValidationError("replacement target has no existing animation")
         used = set()
         for effect in effects:
+            allowed = {'shape','shape_id','role','reason','trigger','click_group','separable','duration','effect'}
+            if not isinstance(effect,dict) or set(effect)-allowed or effect.get('effect','fade')!='fade':
+                raise ValidationError('当前生产效果仅支持fade；不能静默忽略擦除、方向、延迟或研究参数')
             shape = effect.get("shape")
             if type(shape) is not int or shape not in valid_shapes or shape in used:
                 raise ValidationError("animation target must be a distinct existing top-level object")

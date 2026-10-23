@@ -1,4 +1,4 @@
-# 阶段5：PPT教学动画与常见相近字体修复 · 1.3.10
+# 阶段5：PPT教学动画与常见相近字体修复 · 1.3.21
 
 用户明确请求并提供最终可编辑PPTX才启动。基础交付之后由用户手动转换，可选Canva修改；专项不重跑阶段0—4，不撤销基础完成事实。单独PPTX用`init --animation-only`；已有项目使用独立`stage5_animation`。
 
@@ -36,6 +36,30 @@ Canva导出可能将完整句子拆成段落、用空格对齐、将箭头或填
 4. 已有动画默认保留，不重复叠加。确需调整的顶层对象列`replace_targets`并提供新效果；仅支持可完整解析的整对象淡入，按原点击顺序保留其他对象并追加新组；不能空删除。复杂/交互/退出/运动/分段动画、音视频或未知依赖为阻断，不能近似后通过。题干答案同框、底图答案、不可独立控制组合列`manual_issues`，不拆、不遮、不重建。
 5. plan绑定`input_sha256`、`controller_reviewed=true`及实际`preview_review_evidence`，覆盖全部页。字体修复启用时还需总`font_review_evidence`及每页`font_observation`，正常页也说明检查结果；环境具备时`font_repairs=[]`表示检查后无须修复，不表示跳过检查；缺环境时保存未验证原因并保持字体，不能填写虚构font_observation。未解决`manual_issues`不能执行。每页还需`content_roles_reviewed=true`及`visibility_rules`，逐个记录题目/答案对象与实际reveal_click，不能由关键词自动放行。
 
+### 教学单元与独立顺序依据
+
+制定effects前，按原页可见编号、推理依赖、问题与回应关系确定讲解单元。需要选择动画方法时读[教学动画方法与反例](教学动画方法与反例.md)。每页在现有plan内补`sequence_evidence`和`teaching_units`，不新增平行表单或用户节点，不从effects顺序反推预期顺序。
+
+```json
+{
+  "sequence_evidence":"原页上方是问题，下方答案和解释应在讨论后同次揭示；问题需一直保留供对照",
+  "teaching_units":[{
+    "shape_ids":[3,4],
+    "reveal_click":1,
+    "purpose":"讨论后呈现答案及依据",
+    "retain_ids":[2]
+  }]
+}
+```
+
+`shape_ids`使用真实顶层shape_id，不是对象序号；每个对象只能属于一个单元。单元按预期点击顺序排列，覆盖全部实际动画目标（含保留的已有淡入）；同一单元的全部对象同次进入、淡入时长一致。静态题干、前序例证等必要参照写`retain_ids`，表示该单元揭示时必须可见。`reveal_click=0`只用于初始静态单元；整页静态可用空单元列表，但仍说明保留理由。题目/答案角色继续由原`visibility_rules`约束，两者不替代。
+
+每次点击应新增一个待讲信息或完成明确操作；装饰编号可随内容同步，不单独凑点击。图片、长文字或组合内没有独立对象时，不假装逐项控制；静态保留或按实际限制记`manual_issues`。已有动画对象也需纳入当前教学单元，未知复杂时间树仍阻断。旧计划缺少教学意图时需补实际依据后重新登记，不自动从effects生成预期。
+
+原页预览同时检查图片内对错符号、配色、边角提示及其他提前泄题线索。答案烘焙在选项图中时，只隐藏答案文本框无效。隐藏目标后的旧线、阴影、旧文字等遮挡依赖在逐状态图中核查；两类已发现问题写`manual_issues`，不得为凑通过擅自拆框、改图、遮盖或重建页面。
+
+当前生产效果仅`fade`（可省略effect字段），触发仍为click/with_previous。direction、delay、原生effect_type及研究擦除等参数明确拒绝，不静默当淡入。定向擦除与单次动作内短接续仅保留为后续限定候选，不从研究副本复制时间树进正式产物。
+
 ### 字体清单契约
 
 plan顶层`font_repairs`为清单。单对象项记录实际`page`、`shape_id`、完整单元`unit_kind`（sentence/title）、`start`/`end`、逐字相同的`text`、`whole_unit_confirmed=true`、`boundary_reason`、`single_font_intent_evidence`、`reason`、`bold`（明确布尔）、`bold_reason`、`visual_evidence`（真实本地预览或详细观察记录）。新计划明确`mode`（compatibility/reference_match）、`target_font`（所选常见字体）、`candidate_fonts`、`non_premium=true`、`font_file`（本机实际已安装文件绝对路径）、`font_face_index`（集合索引，默认0）、`font_match_reason`、`sample_review_evidence`（已查看试修页面/观察记录）；两种模式均必需`reference_visual`，与原版同页实际比较，基础项目绑定阶段2同页图。字体文件、样本、原版与诊断证据在登记和执行时绑定指纹；执行器核查常见家族、安装位置、字体内部家族名及完整字形覆盖。历史未标mode的窄范围微软雅黑计划保留原执行语义，不用于生成新的相近字体计划。
@@ -55,8 +79,8 @@ inspect-animation自动读取项目内各Canva任务的font_handoff.json，核�
 `record-animation-plan --plan <文件>`后`apply-teaching-animation`。直接写入源包副本的p:timing；字体按授权清单准确修复，不调用Office写动画。失败标failed，基础完成事实保持。
 
 1. **文件差异核验**：只允许计划内timing、原font_repairs及新text_optimizations声明属性/原稿还原；正文独立检查与XML属性允许清单分别执行，未授权文字、媒体、背景、对象身份及其余包文件变化仍拒绝。纯动画和窄范围字体任务保留原严格检查。
-2. **成品时间轴核验**：读取最终成品的完整时间树，核对对象、触发、同步组、时长及题目/答案可见性契约。未知语义阻断；支持完整顶层对象短淡入、click及with_previous。
-3. **后台逐点击视觉核验**：`export-animation-states`生成每页初始及全部点击完成画面；临时状态PPTX中的未出现对象真实移除，仅用于后台渲染，正式成品不变。主控实际审阅全部图，检查题目/答案顺序、底图残影、图文同步、中文字体、粗细、断行、溢出、遮挡和最终完整性。未做字体/文字呈现调整的页面仍与原稿预览逐像素一致；优化页按实际正文、字形、层级、断行和留白检查，全部状态写text_quality_observation。
+2. **成品时间轴核验**：读取最终成品的完整时间树，核对对象、触发、同步组、时长及题目/答案可见性契约；另对照独立teaching_units核查实际揭示点击、必要参照、目标覆盖及同单元完成时间。计划与成品同样错序也不能通过。未知语义阻断；支持完整顶层对象短淡入、click及with_previous。
+3. **后台逐点击视觉核验**：`export-animation-states`生成每页初始及全部点击完成画面；临时状态PPTX中的未出现对象真实移除，仅用于后台渲染，正式成品不变。主控实际审阅全部图，检查题目/答案顺序、图片内提前线索、隐藏后露出的旧线/文字、必要对比材料、图文同步、中文字体、粗细、断行、溢出、遮挡和最终完整性。末态正常不能抵销中间点击状态的缺陷。未做字体/文字呈现调整的页面仍与原稿预览逐像素一致；优化页按实际正文、字形、层级、断行和留白检查，全部状态写text_quality_observation。
 
 主控使用`record-animation-background-review --review <文件>`登记全部状态；输入/输出/计划/manifest/状态图绑定指纹，具体契约见后台规范。method只能为background_click_states。启用字体检查时，此次逐状态审阅包含全页字体和排版，分别保留background_review与font_review；不能只检查修复页。
 
