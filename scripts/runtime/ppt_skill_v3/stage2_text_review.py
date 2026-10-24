@@ -82,3 +82,15 @@ def require_current_text_reviews(run_dir: str | Path, review: dict[str, Any]) ->
         recorded = actual_by_id.get(identity(row), {})
         if any(recorded.get(key) != value for key, value in row.items()):
             raise ValidationError(f"text review missing or stale for slide {row['slide_index']} {row.get('option_id', '')}")
+        # A detail image is evidence linked to this full-image hash, not a new text authority.
+        root = Path(run_dir).resolve()
+        for region in recorded.get("text_regions", []):
+            detail = region.get("detail_image")
+            if detail is None:
+                continue
+            relative = Path(detail["image_path"])
+            path = (root / relative).resolve()
+            if (relative.is_absolute() or not path.is_relative_to(root)
+                    or path == (root / row["image_path"]).resolve() or not path.is_file()
+                    or file_sha256(path) != detail["image_sha256"]):
+                raise ValidationError("text detail image is missing, stale or outside this project")

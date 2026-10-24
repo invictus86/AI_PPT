@@ -31,7 +31,12 @@ def create_stage2_visual_qa_draft(
         "checks": {key: "needs_rework" for key in sorted(STAGE2_QA_CHECK_KEYS)},
         "slide_findings": findings,
         "text_review_basis": text_basis,
-        "text_reviews": [{**row, "controller_reviewed": False, "status": "needs_rework", "evidence": ""}
+        "text_reviews": [{**row, "controller_reviewed": False, "status": "needs_rework", "evidence": "",
+                          "full_image_reviewed": False,
+                          "text_regions": [{"text_index": index, "completeness_status": "needs_rework",
+                                            "glyph_status": "needs_rework", "evidence": ""}
+                                           for index in range(len(row["reference_text"]))],
+                          "doubts": []}
                          for row in text_rows],
         "rework_recommendation": {
             "target": "stage2_design_plan",

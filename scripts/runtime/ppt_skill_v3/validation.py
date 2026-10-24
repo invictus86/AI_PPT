@@ -978,6 +978,62 @@ def validate_cover_option_style_card(data: Any) -> dict[str, Any]:
     return card
 
 
+def _validate_stage2_text_regions(row: dict[str, Any]) -> None:
+    """Validate review coverage and declared doubts, never infer glyph correctness."""
+    _require_fields(row, ["full_image_reviewed", "text_regions", "doubts"], "text_review")
+    if type(row["full_image_reviewed"]) is not bool:
+        raise ValidationError("text review requires full_image_reviewed")
+    regions = row["text_regions"]
+    if not isinstance(regions, list):
+        raise ValidationError("text_regions must cover all reference_text entries")
+    indices = []
+    for region in regions:
+        if not isinstance(region, dict) or type(region.get("text_index")) is not int:
+            raise ValidationError("each text region requires an integer text_index")
+        indices.append(region["text_index"])
+        for key in ("completeness_status", "glyph_status"):
+            if region.get(key) not in STAGE2_QA_STATUSES:
+                raise ValidationError(f"text region requires {key}")
+        if not isinstance(region.get("evidence"), str):
+            raise ValidationError("text region evidence must be text")
+        if "pass" in (region["completeness_status"], region["glyph_status"]):
+            _require_string(region, "evidence", "text_region")
+        if "detail_image" in region:
+            detail = _require_mapping(region["detail_image"], "text_region.detail_image")
+            _require_string(detail, "image_path", "detail_image")
+            if not isinstance(detail.get("image_sha256"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", detail["image_sha256"]):
+                raise ValidationError("detail image requires its actual SHA256")
+            if detail.get("source_image_sha256") != row["image_sha256"]:
+                raise ValidationError("detail image must bind the current full-image SHA256")
+    if sorted(indices) != list(range(len(row["reference_text"]))):
+        raise ValidationError("text_regions must cover every reference_text entry exactly once")
+    doubts = row["doubts"]
+    if not isinstance(doubts, list):
+        raise ValidationError("text review doubts must be a list")
+    for doubt in doubts:
+        if (not isinstance(doubt, dict) or type(doubt.get("text_index")) is not int
+                or doubt["text_index"] not in indices):
+            raise ValidationError("each doubt must identify a current text region")
+        _require_string(doubt, "observation", "text_doubt")
+        if doubt.get("status") not in {"unresolved", "resolved"}:
+            raise ValidationError("text doubt requires unresolved or resolved status")
+        if not isinstance(doubt.get("resolution"), str):
+            raise ValidationError("text doubt requires a resolution field")
+        if doubt["status"] == "resolved":
+            _require_string(doubt, "resolution", "text_doubt")
+    if row["status"] == "pass":
+        if not row["full_image_reviewed"]:
+            raise ValidationError("text pass requires review of the saved full image")
+        if any(region[key] != "pass" for region in regions for key in ("completeness_status", "glyph_status")):
+            raise ValidationError("all regions must pass completeness and glyph review")
+        by_index = {region["text_index"]: region for region in regions}
+        for doubt in doubts:
+            if doubt["status"] != "resolved":
+                raise ValidationError("unresolved text doubts block proofreading pass")
+            if "detail_image" not in by_index[doubt["text_index"]]:
+                raise ValidationError("resolved text doubts require an actual detail image")
+
+
 def validate_stage2_aesthetic_review(data: Any) -> dict[str, Any]:
     review = _require_mapping(data, "stage2_aesthetic_review")
     _reject_forbidden_fields(review)
@@ -1027,6 +1083,7 @@ def validate_stage2_aesthetic_review(data: Any) -> dict[str, Any]:
             raise ValidationError("text review requires Stage 1 reference_text")
         if row.get("status") not in STAGE2_QA_STATUSES or type(row.get("controller_reviewed")) is not bool:
             raise ValidationError("text review requires status and controller_reviewed")
+        _validate_stage2_text_regions(row)
         if row["status"] == "pass":
             if not row["controller_reviewed"]:
                 raise ValidationError("per-image text pass requires actual controller review")

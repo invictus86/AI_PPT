@@ -44,7 +44,7 @@
       "type": "array", "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["slide_index", "image_path", "image_sha256", "reference_text", "controller_reviewed", "status", "evidence"],
+        "required": ["slide_index", "image_path", "image_sha256", "reference_text", "controller_reviewed", "status", "evidence", "full_image_reviewed", "text_regions", "doubts"],
         "properties": {
           "slide_index": { "type": "integer", "minimum": 1 },
           "option_id": { "enum": ["A", "B", "C", "D"] },
@@ -53,11 +53,19 @@
           "reference_text": { "type": "array", "items": { "type": "string" } },
           "controller_reviewed": { "type": "boolean" },
           "status": { "enum": ["pass", "needs_rework"] },
-          "evidence": { "type": "string" }
+          "evidence": { "type": "string" },
+          "full_image_reviewed": { "type": "boolean" },
+          "text_regions": { "type": "array", "items": { "$ref": "#/$defs/textRegion" } },
+          "doubts": { "type": "array", "items": { "$ref": "#/$defs/textDoubt" } }
         },
         "allOf": [{
           "if": { "properties": { "status": { "const": "pass" } } },
-          "then": { "properties": { "controller_reviewed": { "const": true }, "evidence": { "pattern": "\\S" } } }
+          "then": { "properties": {
+            "controller_reviewed": { "const": true }, "evidence": { "pattern": "\\S" },
+            "full_image_reviewed": { "const": true },
+            "text_regions": { "items": { "properties": { "completeness_status": { "const": "pass" }, "glyph_status": { "const": "pass" } } } },
+            "doubts": { "items": { "properties": { "status": { "const": "resolved" } } } }
+          } }
         }]
       }
     },
@@ -76,5 +84,45 @@
     "if": { "properties": { "overall_status": { "const": "pass" } } },
     "then": { "properties": { "text_reviews": { "items": { "properties": { "status": { "const": "pass" } } } } } }
   }],
+  "$defs": {
+    "textRegion": {
+      "type": "object",
+      "required": ["text_index", "completeness_status", "glyph_status", "evidence"],
+      "properties": {
+        "text_index": { "type": "integer", "minimum": 0 },
+        "completeness_status": { "enum": ["pass", "needs_rework"] },
+        "glyph_status": { "enum": ["pass", "needs_rework"] },
+        "evidence": { "type": "string" },
+        "detail_image": {
+          "type": "object", "required": ["image_path", "image_sha256", "source_image_sha256"],
+          "properties": {
+            "image_path": { "type": "string", "minLength": 1 },
+            "image_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "source_image_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+          }
+        }
+      },
+      "allOf": [{
+        "if": { "anyOf": [
+          { "properties": { "completeness_status": { "const": "pass" } } },
+          { "properties": { "glyph_status": { "const": "pass" } } }
+        ] },
+        "then": { "properties": { "evidence": { "pattern": "\\S" } } }
+      }]
+    },
+    "textDoubt": {
+      "type": "object", "required": ["text_index", "observation", "status", "resolution"],
+      "properties": {
+        "text_index": { "type": "integer", "minimum": 0 },
+        "observation": { "type": "string", "pattern": "\\S" },
+        "status": { "enum": ["unresolved", "resolved"] },
+        "resolution": { "type": "string" }
+      },
+      "allOf": [{
+        "if": { "properties": { "status": { "const": "resolved" } } },
+        "then": { "properties": { "resolution": { "pattern": "\\S" } } }
+      }]
+    }
+  },
   "additionalProperties": true
 }
