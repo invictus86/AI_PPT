@@ -157,6 +157,7 @@ def create_canva_task_brief(
     }
     task = {
         "schema_version": "1.2",
+        "text_proofreading_version": "1.0",
         "task_id": task_id,
         "task_type": "canva_auxiliary_edit",
         "requires_design_lease": True,
@@ -311,6 +312,19 @@ def record_canva_task_event(
             if {a['slide_index'] for a in checked_event['page_audits']} != set(checked_event['slide_indices']):
                 raise ValidationError('提交须保留本批全部页面的最新回读证据')
             _validate_committable_page_audits(checked_event['page_audits'])
+        if task.get('text_proofreading_version') == '1.0' and set(checked_event['operation_types']) & {'replace_text', 'find_and_replace_text'}:
+            for audit in checked_event['page_audits']:
+                if audit['copy_check'].get('mode') == 'unmodified_image' and not audit['proposed_operations']:
+                    continue
+                report = audit.get('text_proofreading')
+                if not isinstance(report, dict) or report.get('language_reviewed') is not True:
+                    raise ValidationError('文字修复须先完成语言审阅、逐字差异和对象定位；原稿疑误单列')
+                if checked_event['transaction_status'] == 'committed':
+                    from .canva_proofreading import verify_repairs
+                    readback = audit.get('text_repair_readback', {})
+                    if readback.get('controller_readback_confirmed') is not True:
+                        raise ValidationError('精准修复须实际回读全部文字对象，不以预期结果冒充已保存')
+                    verify_repairs(report, audit['expected_text'], readback.get('objects'))
         for audit in checked_event['page_audits']:
             _validate_graphic_copy_evidence(root, audit)
     elif (task.get('text_policy') == 'stage1_unchanged_fonts_only' or task.get('schema_version') == '1.2') and checked_event['transaction_status'] in {'draft', 'committed'}:
@@ -454,6 +468,21 @@ def resolve_canva_recovery(run_dir, task_id, evidence):
         if evidence.get('saved_pages_readback_confirmed') is not True:
             raise ValidationError('远端保存须实际重新读取全部批次页面')
         _validate_committable_page_audits(previous.get('page_audits'))
+        if task.get('text_proofreading_version') == '1.0' and set(previous['operation_types']) & {'replace_text', 'find_and_replace_text'}:
+            from .canva_proofreading import verify_repairs
+            readbacks = evidence.get('text_repair_readbacks', [])
+            if not isinstance(readbacks, list):
+                raise ValidationError('失败恢复须提供实际文字对象回读列表')
+            by_page = {item.get('slide_index'): item for item in readbacks if isinstance(item, dict)}
+            if len(by_page) != len(readbacks):
+                raise ValidationError('失败恢复回读页码不得重复或缺失')
+            for audit in previous['page_audits']:
+                if audit['copy_check'].get('mode') == 'unmodified_image' and not audit['proposed_operations']:
+                    continue
+                readback = by_page.get(audit['slide_index'], {})
+                if readback.get('controller_readback_confirmed') is not True:
+                    raise ValidationError('失败恢复不能复用未核实的文字结果，须实际回读全部修复页面')
+                verify_repairs(audit.get('text_proofreading'), audit['expected_text'], readback.get('objects'))
         repair = task.get('text_policy') == 'authorized_reference_repair'
         allowed = set(task.get('repair_authorization', {}).get('allowed_operations', [])) if repair else FONT_ONLY_OPERATIONS
         if set(previous['operation_types']) - allowed:
@@ -647,7 +676,7 @@ def _validate_page_audit(value: Any) -> dict[str, Any]:
     manual_todos = value.get("manual_todos", [])
     if not isinstance(manual_todos, list):
         raise ValidationError("Canva page audit manual_todos must be a list")
-    return {
+    result = {
         "slide_index": slide_index,
         "canva_page_id": canva_page_id,
         "is_editable": value["is_editable"],
@@ -661,6 +690,17 @@ def _validate_page_audit(value: Any) -> dict[str, Any]:
         "visual_checks": [_validate_visual_check(item) for item in visual_checks],
         "manual_todos": [_validate_manual_todo(item, slide_index=slide_index) for item in manual_todos],
     }
+    if value.get('text_proofreading') is not None:
+        from .canva_proofreading import _rebuild
+        report = _rebuild(value['text_proofreading'], expected_text)
+        if report['input'].get('slide_index') != slide_index or report['input'].get('canva_page_id') != canva_page_id:
+            raise ValidationError('校对报告必须绑定本页实际页码及Canva页面ID')
+        result['text_proofreading'] = report
+    if value.get('text_repair_readback') is not None:
+        if not isinstance(value['text_repair_readback'], dict):
+            raise ValidationError('文字修复回读须为实际对象记录')
+        result['text_repair_readback'] = value['text_repair_readback']
+    return result
 
 
 def _validate_copy_check(value: Any, *, expected_text: list[str]) -> dict[str, Any]:
@@ -690,7 +730,8 @@ def _validate_copy_check(value: Any, *, expected_text: list[str]) -> dict[str, A
             if not isinstance(value.get(key), str) or not value[key]:
                 raise ValidationError('图像文字须保留原版和实际Canva预览证据')
     if status == "pass" and not page_text_equal(post_edit_text, compared):
-        raise ValidationError("a passed Canva copy_check must preserve original words, numbers and punctuation; layout may vary")
+        from .canva_proofreading import copy_difference_summary
+        raise ValidationError("Canva文字与原稿不一致：" + copy_difference_summary(post_edit_text, compared))
     if status == 'verification_skipped':
         if value.get('mode') not in {'unmodified_image', 'retained_artwork'} or not isinstance(value.get('reason'), str) or not value['reason'].strip():
             raise ValidationError('无文本层只能明确记录保留未修改的原图和未文字核验原因')
@@ -949,6 +990,9 @@ def _update_page_audit(task_dir: Path, task_id: str, event: dict[str, Any]) -> N
             "task_id": task_id,
             "status": status,
             "pages": [by_slide[index] for index in sorted(by_slide)],
+            "source_text_issues": [dict(issue, slide_index=index)
+                                   for index, audit in sorted(by_slide.items())
+                                   for issue in audit.get('text_proofreading', {}).get('source_issues', [])],
             "created_at": document.get("created_at") if isinstance(document, dict) else recorded_at,
             "updated_at": recorded_at,
         },

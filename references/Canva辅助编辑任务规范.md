@@ -1,4 +1,4 @@
-# Canva辅助编辑任务规范 · 1.3.10
+# Canva辅助编辑任务规范 · 1.3.27
 
 ## 路由、范围与授权
 
@@ -22,6 +22,8 @@ Canva是阶段外任务，不重跑阶段0—4，不重写配套，不设置基�
 4. 当前Canva对象：待修复的文字、坐标与尺寸，不能作为批准正文。
 
 每页建立slide_index与Canva page_id映射，记录expected_text、current_text、差异、操作及回读结果。拆成多个对象或合在一个对象的文字，按实际阅读关系映射；不要把API对象存储顺序当成视觉顺序，不要因换行、合并对象虚报错字。保留正文标点、数字、单位与有意义空格。
+
+文字校对同时做“转换比对”和“语言审阅”，即使Canva与原稿相同，也检查原稿词语和句子本身；具体按[Canva文字校对与精准修复](Canva文字校对与精准修复规范.md)在当前批次内定位。原稿疑误单列，不自动改写阶段1，也不把疑误建议用于自动替换；有可靠原稿依据的转换错误才生成对象与上下文绑定的修复。语言判断由主控完成，程序只提供词形线索、字符差异、唯一匹配和实际回读核验。
 
 修改后再次读文本/对象：
 - 文字修复目标保持批准正文的字词、数字、答案和含义标点；正常断行、分段和明确中文排版空格可不同，英文/公式有意义空格保持。current_text可保留修复前转换错误，post_edit_text必须反映实际回读，不能直接复制expected_text伪造结果。
@@ -79,7 +81,7 @@ python .skill/scripts/pptctl.py create-canva-task-brief --run-dir <项目> --pro
 
 明确授权保真修复后登记操作范围：
 ```bash
-python .skill/scripts/pptctl.py authorize-canva-repair --run-dir <项目> --task-id <任务> --evidence <真实用户原话> --operation replace_text --operation format_text --operation position_element --operation resize_element
+python .skill/scripts/pptctl.py authorize-canva-repair --run-dir <项目> --task-id <任务> --evidence <真实用户原话> --operation replace_text --operation find_and_replace_text --operation format_text --operation position_element --operation resize_element
 ```
 
 新任务初始合同为stage1_unchanged_fonts_only；用户已请求可编辑文字优化时，主控直接用上述命令登记authorized_reference_repair，无需再次向用户确认。纯字体/粗细的窄范围请求保留原范围。允许修复前文字与权威不同，修复后实际回读内容保真，接受批准的排版差异；阶段1改变仍使旧参考失效。

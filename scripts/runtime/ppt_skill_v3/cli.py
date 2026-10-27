@@ -204,6 +204,11 @@ def build_parser() -> argparse.ArgumentParser:
     repair_parser.add_argument('--task-id', required=True)
     repair_parser.add_argument('--evidence', required=True)
     repair_parser.add_argument('--operation', action='append', required=True)
+    text_check_parser = subparsers.add_parser('check-canva-text', help='Internal read-only copy diagnostics, precise operation preparation and readback verification.')
+    text_check_parser.add_argument('--run-dir', required=True)
+    text_check_parser.add_argument('--task-id', required=True)
+    text_check_parser.add_argument('--input', required=True, help='Filtered text objects, reviewed mappings and language observations as JSON.')
+    text_check_parser.add_argument('--mode', choices=['inspect', 'prepare', 'verify'], default='inspect')
     canva_event_parser = subparsers.add_parser("record-canva-task-event", help="Append one sanitized stage-external Canva batch event.")
     canva_event_parser.add_argument("--run-dir", required=True)
     canva_event_parser.add_argument("--task-id", required=True)
@@ -681,6 +686,10 @@ def _execute(args, parser):
         return 0
     if args.command == 'authorize-canva-repair':
         print(json.dumps(authorize_canva_repair(args.run_dir, args.task_id, evidence=args.evidence, allowed_operations=args.operation), ensure_ascii=False))
+        return 0
+    if args.command == 'check-canva-text':
+        from .canva_proofreading import check_task_text
+        print(json.dumps(check_task_text(args.run_dir, args.task_id, read_json(args.input), args.mode), ensure_ascii=False))
         return 0
     if args.command == "record-canva-task-event":
         try:
