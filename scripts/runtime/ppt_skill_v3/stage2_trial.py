@@ -33,6 +33,7 @@ from .image_routes import (
     route_tool_function,
 )
 from .json_io import read_json, write_json
+from .image_preferences import resolve_image_generation
 from .image_prompt_docs import apply_image_style, refresh_prompt_delivery
 from .image_style import image_style_snapshot, result_is_current
 from .planning_assets import (
@@ -110,7 +111,8 @@ def dispatch_stage2_trial_first5_packets(
     route: str | None = None,
 ) -> list[Path]:
     root = Path(run_dir)
-    generation_route = normalize_image_generation_route(route)
+    selection = resolve_image_generation(root, route=route)
+    generation_route = selection["image_generation_route"]
     state = read_state(root)
     _require_stage2_trial_open(state)
     from .thematic_workflow import require_step
@@ -173,6 +175,7 @@ def dispatch_stage2_trial_first5_packets(
         packet_prefix="stage2-trial-first5",
         expected_output=lambda slide_index: f"阶段2_图片版PPT/img/slide_{slide_index:03d}.png",
         route=generation_route,
+        selection=selection,
         trial_selection=lambda slide_index: {
             "default_sample": slide_index in default_sample,
             "default_first5": slide_index in default_sample,
@@ -210,7 +213,8 @@ def dispatch_stage2_remaining_packets(
     route: str | None = None,
 ) -> list[Path]:
     root = Path(run_dir)
-    generation_route = normalize_image_generation_route(route)
+    selection = resolve_image_generation(root, route=route)
+    generation_route = selection["image_generation_route"]
     state = read_state(root)
     if state["current_stage"] != "stage2" or not _trial_confirmed_or_skipped(state):
         raise ValidationError("stage2 remaining packets require approved trial first5, or an explicit user-authorized trial skip")
@@ -239,6 +243,7 @@ def dispatch_stage2_remaining_packets(
         packet_prefix="stage2-remaining",
         expected_output=lambda slide_index: f"阶段2_图片版PPT/img/slide_{slide_index:03d}.png",
         route=generation_route,
+        selection=selection,
     )
 
     state["status"] = "waiting_for_stage2_remaining_image_results"
@@ -504,6 +509,7 @@ def _dispatch_stage2_subset(
     expected_output: Any,
     route: str,
     trial_selection: Any | None = None,
+    selection: dict[str, Any] | None = None,
 ) -> list[Path]:
     generation_route = normalize_image_generation_route(route)
     total_packets = len(slide_indices)
@@ -538,6 +544,7 @@ def _dispatch_stage2_subset(
             "slide_index": slide_index,
             "title": plan_by_index[slide_index]["title"],
             "image_generation_route": generation_route,
+            "image_generation_selection": selection or resolve_image_generation(root, route=route),
             "execution_tool": route_tool(generation_route),
             "execution_tool_function": route_tool_function(generation_route),
             "execution_mode": "parallel_required",

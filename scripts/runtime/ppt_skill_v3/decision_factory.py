@@ -7,6 +7,7 @@ from .decisions import record_decision
 from .education_context import is_k12_lesson_plan_required, load_education_context
 from .image_routes import DEFAULT_IMAGE_GENERATION_ROUTE, IMAGE_ROUTE_OPENAI_IMAGE_API, normalize_image_generation_route
 from .paths import iter_decision_paths
+from .image_preferences import resolve_image_generation
 from .state import read_state, stage3_lesson_plan_required
 from .time_utils import now_iso
 from .validation import (
@@ -81,9 +82,10 @@ def make_decision(
         basis["slide_indices"] = _normalize_slide_indices(slide_indices)
     if image_generation_route:
         image_generation_route = normalize_image_generation_route(image_generation_route)
-    resolved_image_generation_route = _default_image_generation_route(decision_type, image_generation_route)
+    resolved_image_generation_route = _default_image_generation_route(decision_type, image_generation_route, run_dir=root)
     if resolved_image_generation_route:
         basis["image_generation_route"] = resolved_image_generation_route
+        basis["image_generation_selection"] = resolve_image_generation(root, route=image_generation_route)
     execution: dict[str, Any] = {
         "allowed_actions": (
             allowed_actions
@@ -146,11 +148,11 @@ def _default_allowed_actions(
     return actions
 
 
-def _default_image_generation_route(decision_type: str, image_generation_route: str | None) -> str | None:
+def _default_image_generation_route(decision_type: str, image_generation_route: str | None, *, run_dir=None) -> str | None:
     if image_generation_route:
         return normalize_image_generation_route(image_generation_route)
     if decision_type in STAGE2_IMAGE_ROUTE_DECISIONS:
-        return DEFAULT_IMAGE_GENERATION_ROUTE
+        return resolve_image_generation(run_dir)["image_generation_route"]
     return None
 
 

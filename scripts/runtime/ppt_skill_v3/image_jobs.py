@@ -63,6 +63,8 @@ def run_packet_job(root, packet_path, packet, config, *, force=False):
             source_batch = read_json(root / batch_value)
             if packet['packet_id'] in source_batch.get('native_fallback_packets', {}):
                 raise ValidationError('该图片已交接原生备用，不再向中转站重复提交')
+        from .image_native import require_no_pending_native_request
+        require_no_pending_native_request(root, packet)
         receipt = read_json(receipt_path) if receipt_path.exists() else {}
         recovered = _recovered_item(root, receipt)
         if recovered:

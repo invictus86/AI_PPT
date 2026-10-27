@@ -49,7 +49,7 @@ def create_image_generation_batch(
         previous = read_json(batch_path)
         frozen = previous.get('packet_paths', [])
         if len(frozen) == len(packet_paths) and previous.get('image_generation_route') == resolved_route:
-            fields = ('packet_id','prompt','generation_basis','image_api_input','slide_index','option_id','purpose')
+            fields = ('packet_id','prompt','generation_basis','image_api_input','image_gen_input','slide_index','option_id','purpose')
             same = True
             for new_path, old_path in zip(packet_paths, frozen):
                 old_file = root/old_path
@@ -61,6 +61,8 @@ def create_image_generation_batch(
                     same = False
                     break
             if same:
+                for new_path, old_path in zip(packet_paths, frozen):
+                    atomic_json(new_path, read_json(root / old_path))
                 return batch_path  # Resume existing results, including unfinished requests.
     timestamp = now_iso()
     batch_id = uuid.uuid4().hex
@@ -73,6 +75,7 @@ def create_image_generation_batch(
         "stage": _normalize_stage(stage),
         "purpose": purpose,
         "image_generation_route": resolved_route,
+        "image_generation_selection": read_json(packet_paths[0]).get("image_generation_selection"),
         "execution_tool": route_tool(resolved_route),
         "tool_call": group["tool_call"],
         "execution_mode": group["mode"],

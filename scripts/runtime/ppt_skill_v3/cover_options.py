@@ -27,6 +27,7 @@ from .image_routes import (
     route_tool_function,
 )
 from .json_io import read_json, write_json
+from .image_preferences import resolve_image_generation
 from .image_prompt_docs import apply_image_style, refresh_prompt_delivery
 from .image_style import image_style_snapshot, result_is_current
 from .planning_assets import (
@@ -70,7 +71,8 @@ def dispatch_cover_option_packets(
     route: str | None = None,
 ) -> list[Path]:
     root = Path(run_dir)
-    generation_route = normalize_image_generation_route(route)
+    selection = resolve_image_generation(root, route=route)
+    generation_route = selection["image_generation_route"]
     state = read_state(root)
     _require_cover_options_open(state)
     content = validate_content_asset(load_content(root))
@@ -120,6 +122,7 @@ def dispatch_cover_option_packets(
             "slide_index": cover_slide["slide_index"],
             "title": cover_slide["title"],
             "image_generation_route": generation_route,
+            "image_generation_selection": selection,
             "execution_tool": route_tool(generation_route),
             "execution_tool_function": route_tool_function(generation_route),
             "execution_mode": "parallel_required",

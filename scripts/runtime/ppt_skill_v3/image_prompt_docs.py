@@ -97,14 +97,26 @@ def prepare_image_request(run_dir: str | Path, packet_path: str | Path, packet: 
     if route == IMAGE_ROUTE_OPENAI_IMAGE_API:
         require_image_api_model(packet.get('image_api_input', {}).get('model', DEFAULT_IMAGE_API_MODEL))
     else:
-        from .image_fallback import validate_native_fallback
-        validate_native_fallback(run_dir, packet)
-    with _ledger_lock(Path(run_dir), '.prepare.lock'):
+        from .image_native import validate_native_request
+        validate_native_request(run_dir, packet)
+    from contextlib import ExitStack
+    with ExitStack() as stack:
+        if route != IMAGE_ROUTE_OPENAI_IMAGE_API and submitted:
+            from .resources import resource_slot
+            from .image_jobs import image_route_target
+            stack.enter_context(resource_slot(image_route_target(Path(run_dir).resolve(), packet)))
+        stack.enter_context(_ledger_lock(Path(run_dir), '.prepare.lock'))
         if route != IMAGE_ROUTE_OPENAI_IMAGE_API and submitted:
             entry_path = Path(run_dir) / LEDGER_RELPATH / (_entry_id(packet) + '.json')
             entry = read_json(entry_path) if entry_path.exists() else {}
             if entry.get('status') != '待生成':
-                raise ValidationError('该原生备用请求已提交或结果未知，先恢复原工具结果，不重复调用')
+                raise ValidationError('该内置生图请求已提交或结果未知，先恢复原工具结果，不重复调用')
+        if route != IMAGE_ROUTE_OPENAI_IMAGE_API and submitted:
+            from .image_native import require_no_pending_native_request, require_safe_native_submission
+            if 'native_fallback' in packet:
+                require_no_pending_native_request(run_dir, packet)
+            else:
+                require_safe_native_submission(run_dir, packet)
         return _prepare_image_request(run_dir, packet_path, packet, submitted=submitted)
 
 

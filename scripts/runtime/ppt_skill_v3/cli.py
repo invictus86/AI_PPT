@@ -18,7 +18,7 @@ from .image_deck import build_image_deck
 from .image_api import configure_image_api_key, default_batch_path_for_stage, image_api_key_status, load_image_api_config, run_image_api_batch
 from .image_packets import dispatch_image_api_packets, dispatch_image_generation_packets
 from .image_results import record_image_result
-from .image_routes import DEFAULT_IMAGE_GENERATION_ROUTE
+from .image_preferences import MODES, configure_image_generation, image_generation_status, image_generation_menu, resolve_image_generation
 from .installation import inspect_installation, install_profile
 from .json_io import read_json, write_json
 from .layout_migration import migrate_decisions_layout
@@ -281,9 +281,17 @@ def build_parser() -> argparse.ArgumentParser:
     configure_image_api_parser.add_argument("--key-file")
     image_api_key_status_parser = subparsers.add_parser("image-api-key-status", help="Check image API key configuration without printing the key.")
     image_api_key_status_parser.add_argument("--key-file")
+    mode_parser = subparsers.add_parser("configure-image-generation", help="设置本机默认或项目生图模式，仅 native / auto。")
+    mode_parser.add_argument("--run-dir", help="仅设置当前项目；省略时设置本机工作区默认。")
+    mode_choice = mode_parser.add_mutually_exclusive_group(required=True)
+    mode_choice.add_argument("--mode", choices=list(MODES))
+    mode_choice.add_argument("--inherit", action="store_true", help="项目恢复跟随本机默认。")
+    mode_status = subparsers.add_parser("image-generation-status", help="查看后续新批次的生图模式，不请求生图。")
+    mode_status.add_argument("--run-dir")
+    subparsers.add_parser("image-generation-menu", help="交互切换本机默认生图模式。")
     cover_options_parser = subparsers.add_parser("dispatch-cover-options", help="Create four parallel cover style image generation packets.")
     cover_options_parser.add_argument("--run-dir", required=True)
-    cover_options_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=DEFAULT_IMAGE_GENERATION_ROUTE)
+    cover_options_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=None)
     promote_cover_parser = subparsers.add_parser("promote-selected-cover-option", help="Promote the approved cover option to a formal stage2 full_slide result.")
     promote_cover_parser.add_argument("--run-dir", required=True)
     promote_cover_parser.add_argument("--force", action="store_true")
@@ -293,16 +301,16 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_generation_parser = subparsers.add_parser("dispatch-image-generation", help="Create parallel image generation packets for the selected route.")
     dispatch_generation_parser.add_argument("--run-dir", required=True)
     dispatch_generation_parser.add_argument("--stage", choices=["stage2"], required=True)
-    dispatch_generation_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=DEFAULT_IMAGE_GENERATION_ROUTE)
+    dispatch_generation_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=None)
     trial_parser = subparsers.add_parser("dispatch-stage2-trial-first5", help="Create stage2B trial sample image generation packets.")
     trial_parser.add_argument("--run-dir", required=True)
     trial_parser.add_argument("--sample-count", type=int, default=5, help="试样总共5页，含已选封面，通常新增4张内页；仅用户明确指定时覆盖")
     trial_parser.add_argument("--extra-slide", type=int, action="append", default=[])
     trial_parser.add_argument("--extra-reason", action="append", default=[])
-    trial_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=DEFAULT_IMAGE_GENERATION_ROUTE)
+    trial_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=None)
     remaining_parser = subparsers.add_parser("dispatch-stage2-remaining", help="Create stage2 remaining full-slide image generation packets after trial approval.")
     remaining_parser.add_argument("--run-dir", required=True)
-    remaining_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=DEFAULT_IMAGE_GENERATION_ROUTE)
+    remaining_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=None)
     promote_trial_parser = subparsers.add_parser("promote-stage2-trial-first5", help="Promote approved stage2 trial sample results to formal full_slide results.")
     promote_trial_parser.add_argument("--run-dir", required=True)
     promote_trial_parser.add_argument("--force", action="store_true")
@@ -425,11 +433,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
+    if args.command == "image-generation-status":
+        return _execute(args, parser)
     from contextlib import ExitStack
     from .resources import project_lock
     from .metrics import operation_span
     root = getattr(args, 'run_dir', None)
-    read_only = {'status','doctor','drift-check','resume-brief','next-action','image-prompt-sources','list-materials','metrics-summary','verify-stage1-text'}
+    read_only = {'status','doctor','drift-check','resume-brief','next-action','image-prompt-sources','list-materials','metrics-summary','verify-stage1-text','image-generation-status'}
     slow_independent = {'run-image-api-batch','export-animation-previews','export-animation-states'}
     with ExitStack() as stack:
         if root and (Path(root)/'_state/project_state.json').is_file():
@@ -443,6 +453,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _execute(args, parser):
+    if args.command == "configure-image-generation":
+        print(json.dumps(configure_image_generation(args.mode, run_dir=args.run_dir, inherit=args.inherit), ensure_ascii=False))
+        return 0
+    if args.command == "image-generation-status":
+        print(json.dumps(image_generation_status(args.run_dir), ensure_ascii=False))
+        return 0
+    if args.command == "image-generation-menu":
+        return image_generation_menu()
     if args.command == 'list-font-candidates':
         from .font_candidates import common_font_candidates
         print(json.dumps(common_font_candidates(Path(args.text_file).read_text(encoding='utf-8')), ensure_ascii=False))
@@ -588,7 +606,7 @@ def _execute(args, parser):
         snapshot_path, packet = prepare_image_request(args.run_dir, path, read_json(path))
         output = {"packet_path": str(snapshot_path), "prompt": packet["prompt"]}
         if packet.get('image_generation_route') == 'codex_image_gen':
-            from .image_fallback import native_tool_request
+            from .image_native import native_tool_request
             output.update(native_tool_request(args.run_dir, packet))
         print(json.dumps(output, ensure_ascii=False))
         return 0
@@ -730,7 +748,7 @@ def _execute(args, parser):
         return 0
     if args.command == "dispatch-cover-options":
         packets = dispatch_cover_option_packets(args.run_dir, route=args.route)
-        print(json.dumps({"status": "cover_option_packets_created", "packets": [str(path) for path in packets]}, ensure_ascii=False))
+        print(json.dumps({"status": "cover_option_packets_created", "packets": [str(path) for path in packets], "image_generation": read_json(packets[0]).get("image_generation_selection") if packets else None}, ensure_ascii=False))
         return 0
     if args.command == "promote-selected-cover-option":
         result = promote_selected_cover_option(args.run_dir, force=args.force)
@@ -738,11 +756,11 @@ def _execute(args, parser):
         return 0
     if args.command == "dispatch-image-api":
         packets = dispatch_image_api_packets(args.run_dir, args.stage)
-        print(json.dumps({"status": "packets_created", "packets": [str(path) for path in packets]}, ensure_ascii=False))
+        print(json.dumps({"status": "packets_created", "packets": [str(path) for path in packets], "image_generation": read_json(packets[0]).get("image_generation_selection") if packets else None}, ensure_ascii=False))
         return 0
     if args.command == "dispatch-image-generation":
         packets = dispatch_image_generation_packets(args.run_dir, args.stage, route=args.route)
-        print(json.dumps({"status": "packets_created", "packets": [str(path) for path in packets]}, ensure_ascii=False))
+        print(json.dumps({"status": "packets_created", "packets": [str(path) for path in packets], "image_generation": read_json(packets[0]).get("image_generation_selection") if packets else None}, ensure_ascii=False))
         return 0
     if args.command == "dispatch-stage2-trial-first5":
         extra_complex_slides = _extra_complex_slides(args.extra_slide, args.extra_reason)
@@ -752,7 +770,7 @@ def _execute(args, parser):
             sample_count=args.sample_count,
             route=args.route,
         )
-        print(json.dumps({"status": "stage2_trial_first5_packets_created", "packets": [str(path) for path in packets]}, ensure_ascii=False))
+        print(json.dumps({"status": "stage2_trial_first5_packets_created", "packets": [str(path) for path in packets], "image_generation": read_json(packets[0]).get("image_generation_selection") if packets else None}, ensure_ascii=False))
         return 0
     if args.command == "promote-stage2-trial-first5":
         promoted = promote_stage2_trial_first5(args.run_dir, force=args.force)
@@ -768,10 +786,24 @@ def _execute(args, parser):
         return 0
     if args.command == "dispatch-stage2-remaining":
         packets = dispatch_stage2_remaining_packets(args.run_dir, route=args.route)
-        print(json.dumps({"status": "stage2_remaining_packets_created", "packets": [str(path) for path in packets]}, ensure_ascii=False))
+        print(json.dumps({"status": "stage2_remaining_packets_created", "packets": [str(path) for path in packets], "image_generation": read_json(packets[0]).get("image_generation_selection") if packets else None}, ensure_ascii=False))
         return 0
     if args.command == "run-image-api-batch":
         batch_path = args.batch or default_batch_path_for_stage(args.run_dir, args.stage)
+        if not args.batch and resolve_image_generation(args.run_dir)["mode"] == "native":
+            from .image_routes import batch_path_for_route
+            stage_info = {"cover-options": ("cover_option", "stage2-cover-options-image-gen"),
+                          "stage2-trial-first5": ("trial_first5", "stage2-trial-first5-image-gen"),
+                          "stage2-remaining": ("full_slide", "stage2-remaining-image-gen"),
+                          "stage2": ("full_slide", "stage2-image-gen")}
+            purpose, group = stage_info[args.stage]
+            batch_path = batch_path_for_route(args.run_dir, "stage2", purpose, group, "codex_image_gen")
+        batch_file = Path(args.run_dir) / batch_path
+        batch_data = read_json(batch_file)
+        if batch_data.get("image_generation_route") == "codex_image_gen":
+            print(json.dumps({"status": "awaiting_native_image_generation", "packet_paths": batch_data["packet_paths"],
+                              "next_required_action": "主控逐张 prepare-image-request，再实际调用当前聊天的内置生图工具；不尝试中转。"}, ensure_ascii=False))
+            return 0
         from .image_api import MissingImageApiKey
         try:
             config = load_image_api_config(

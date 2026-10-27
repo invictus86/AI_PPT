@@ -20,6 +20,7 @@ from .validation import (
     validate_speaker_script_manifest,
 )
 from .ppt_consistency import CONSISTENCY_RELPATH
+from .image_preferences import image_generation_status
 
 
 def build_next_action(run_dir: str | Path, *, persist: bool = False) -> dict[str, Any]:
@@ -88,6 +89,7 @@ def build_resume_brief(run_dir: str | Path, *, persist: bool = False, compact: b
                 _current_stage_runtime_artifacts(state.get("current_stage"), state.get("runtime_artifacts", {})),
             ),
         },
+        "image_generation": image_generation_status(root),
         "image_style_status": _image_style_status(root, state),
         "canva_auxiliary_tasks": _canva_auxiliary_tasks(root),
         "doctor": {
@@ -156,6 +158,11 @@ def render_resume_brief_markdown(brief: dict[str, Any]) -> str:
     command_groups = next_action.get("suggested_command_groups")
     if command_groups:
         lines.append(f"- 命令组提示：{', '.join(str(item) for item in command_groups)}")
+    image_generation = brief.get("image_generation", {})
+    if image_generation:
+        lines.extend(["", "## 后续新批次生图模式", "",
+                      f"- 模式：{image_generation.get('label')}；来源：{image_generation.get('source')}",
+                      "- 已派发请求仍沿用冻结路线；内置模式由当前聊天实际调用生图工具，不尝试中转。"] )
     if image_style:
         lines.extend(
             [
