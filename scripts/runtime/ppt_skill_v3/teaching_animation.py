@@ -8,7 +8,6 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 import posixpath
-import shutil
 import tempfile
 from typing import Any
 import zipfile
@@ -455,19 +454,71 @@ def verify_animation_only(source: Path, output: Path, pages: set[int], font_repa
             "source_sha256": file_sha256(source), "output_sha256": file_sha256(output)}
 
 
-def _unique_output(directory: Path, stem: str) -> Path:
-    candidate = directory / f"{stem}_可编辑动画版.pptx"
-    version = 2
-    while candidate.exists():
-        candidate = directory / f"{stem}_可编辑动画版_v{version}.pptx"
-        version += 1
-    return candidate
+def _animation_report(task, plan, report):
+    return {**report, "output": task['output'], "input_snapshot": task['input'],
+            "original_input": task['original_input'], "storage_mode": "in_place",
+            "effects": sum(len(s['effects']) for s in plan['slides']),
+            "font_repair_enabled": task.get('font_repair_enabled', False),
+            "font_review_accepted": not task.get('font_repair_enabled', False),
+            "plan_sha256": task['plan_sha256'], "background_accepted": False,
+            "execution_mode": "background_only", "pending_text_issues": plan.get('pending_text_issues', []),
+            "text_content_accepted": not plan.get('pending_text_issues'), "created_at": now_iso()}
+
+
+def _resume_in_place(root, state):
+    from .animation_storage import finish_commit
+    from .background_ppt import read_click_states, check_visibility_rules
+    from .resources import resource_slot, path_identity
+    task = state['stage5_animation']
+    plan = read_json(root / task['plan'])
+    _require_previews(root, task)
+    if file_sha256(root / '_state/阶段5/preview_manifest.json') != task['preview_manifest_sha256']:
+        raise ValidationError('原稿预览依据已变化，不能恢复写回')
+    from .text_mapping_review import require_task_mapping
+    verification = require_task_mapping(root, task, plan.get('text_optimizations', []))
+    _validate_pending_text(root, task, plan, verification, bind=False)
+    _require_reference_authorization(task, plan.get('font_repairs', []))
+    _bind_font_evidence(root, plan.get('font_repairs', []), bind=False)
+    _bind_font_evidence(root, plan.get('font_handoff_resolutions', []), bind=False)
+    with resource_slot('output-directory:' + path_identity(Path(task['original_input']).parent)):
+        output = finish_commit(root, task)
+    report = verify_animation_only(Path(task['input']), output,
+        {s['page'] for s in plan['slides'] if s['effects'] or s.get('replace_targets')},
+        plan.get('font_repairs', []), plan.get('text_optimizations', []), root=root)
+    check_visibility_rules(read_click_states(output), plan)
+    # Repeated apply validates the saved file; it never adds another timing tree
+    # or downgrades an existing background/font acceptance.
+    if task['status'] not in {'executing', 'failed'}:
+        return read_json(root / task['file_verification'])
+    report = _animation_report(task, plan, report)
+    write_json(root / '_state/阶段5/file_verification.json', report)
+    task.update(status='waiting_background_review', background_accepted=False,
+                file_verification='_state/阶段5/file_verification.json')
+    task.pop('error', None)
+    write_state(root, state)
+    return report
 
 
 def execute_animation(run_dir: str | Path) -> dict[str, Any]:
     root = Path(run_dir)
     state = read_state(root)
     task = state["stage5_animation"]
+    replan = False
+    if task.get('storage_mode') == 'in_place' and task.get('in_place_commit'):
+        prior = read_json(root / task['in_place_commit'])
+        replan = (task['status'] == 'plan_ready' and prior['phase'] == 'committed'
+                  and prior['plan_sha256'] != task['plan_sha256'])
+        if replan:
+            if prior['target'] != task['output'] or file_sha256(task['output']) != prior['after_sha256']:
+                raise ValidationError('重新登记计划前的当前PPT已变化，不能原位重做')
+        else:
+            try:
+                return _resume_in_place(root, state)
+            except Exception as exc:
+                if task['status'] in {'executing', 'failed'}:
+                    task.update(status='failed', error=str(exc))
+                    write_state(root, state)
+                raise
     if task.get("status") != "plan_ready":
         raise ValidationError("a reviewed plan with no unresolved manual issues is required")
     plan = read_json(root / task['plan'])
@@ -482,6 +533,14 @@ def execute_animation(run_dir: str | Path) -> dict[str, Any]:
     if task.get("status") != "plan_ready":
         raise ValidationError("a reviewed plan with no unresolved manual issues is required")
     source = Path(task["input"])
+    original = Path(task['output']).resolve() if replan else source.resolve()
+    working_sha = task['output_sha256'] if replan else task['input_sha256']
+    locked = state.get('stage3_locked_presentation_source') or {}
+    if locked.get('source_path') and locked.get('source_sha256'):
+        bound = Path(locked['source_path'])
+        bound = bound if bound.is_absolute() else root / bound
+        if bound.resolve() == original:
+            raise ValidationError('该PPT是基础阶段锁定稿；原位修改会使锁定引用失效，不能自动改写基础记录')
     plan_path = root / task["plan"]
     if file_sha256(source) != task["input_sha256"] or file_sha256(plan_path) != task["plan_sha256"]:
         raise ValidationError("source or plan changed: inspect/review again")
@@ -521,23 +580,24 @@ def execute_animation(run_dir: str | Path) -> dict[str, Any]:
             if file_sha256(source) != task["input_sha256"]:
                 raise ValidationError("source changed during animation execution")
             from .resources import resource_slot, path_identity
-            with resource_slot('output-directory:' + path_identity(source.parent)):
-                output = _unique_output(source.parent, source.stem)
-                # Exclusive reservation also protects against an unrelated writer.
-                with output.open('xb') as destination, merged.open('rb') as generated:
-                    shutil.copyfileobj(generated, destination)
-        report.update({"output": str(output), "effects": sum(len(s["effects"]) for s in plan["slides"]),
-                       "font_repair_enabled": task.get("font_repair_enabled", False),
-                       "font_review_accepted": not task.get("font_repair_enabled", False),
-                       "plan_sha256": task["plan_sha256"], "background_accepted": False,
-                       "execution_mode": "background_only", "created_at": now_iso()})
-        report['pending_text_issues'] = plan.get('pending_text_issues', [])
-        report['text_content_accepted'] = not report['pending_text_issues']
-        write_json(root / "_state/阶段5/file_verification.json", report)
-        task.update({"status": "waiting_background_review", "output": str(output),
-                     "background_accepted": False,
-                     "font_review_accepted": not task.get("font_repair_enabled", False),
-                     "output_sha256": report["output_sha256"], "file_verification": "_state/阶段5/file_verification.json"})
+            from .animation_storage import make_snapshot, prepare_commit, finish_commit
+            with resource_slot('output-directory:' + path_identity(original.parent)):
+                previous_snapshot = make_snapshot(root, original, working_sha)
+                snapshot = source if replan else previous_snapshot
+                journal, commit = prepare_commit(root, original, snapshot, merged,
+                                                 working_sha, task['plan_sha256'], input_sha256=task['input_sha256'])
+                task.update(storage_mode='in_place', original_input=str(original), input=str(snapshot),
+                            initial_input=task.get('initial_input', str(original)), working_input_sha256=working_sha,
+                            previous_input_snapshot=str(previous_snapshot),
+                            output=commit['target'], output_sha256=commit['after_sha256'],
+                            in_place_commit=journal.relative_to(root.resolve()).as_posix(),
+                            file_verification='_state/阶段5/file_verification.json')
+                report = _animation_report(task, plan, report)
+                write_json(root / task['file_verification'], report)
+                write_state(root, state)
+                finish_commit(root, task)
+        task.update({"status": "waiting_background_review", "background_accepted": False,
+                     "font_review_accepted": not task.get("font_repair_enabled", False)})
         write_state(root, state)
         return report
     except Exception as exc:
