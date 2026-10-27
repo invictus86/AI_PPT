@@ -52,12 +52,53 @@ def _top_shapes(tree):
     return result
 
 
+def presentation_uses_timings(package):
+    """Read the related presentation properties; unknown settings stay unknown."""
+    try:
+        rels = etree.fromstring(package.read('ppt/_rels/presentation.xml.rels'))
+        props = [r for r in rels if r.get('Type') == R[1:-1] + '/presProps']
+        if len(props) != 1 or props[0].get('TargetMode') == 'External':
+            return None
+        target = props[0].get('Target', '')
+        part = target.lstrip('/') if target.startswith('/') else posixpath.normpath(posixpath.join('ppt', target))
+        tree = etree.fromstring(package.read(part))
+        shows = tree.findall(P + 'showPr')
+        if len(shows) != 1:
+            return None
+        value = shows[0].get('useTimings')
+        return {'true': True, '1': True, 'false': False, '0': False}.get(value)
+    except (KeyError, etree.XMLSyntaxError):
+        return None
+
+
+def inspect_slide_advance(tree, use_timings):
+    # Check both markup-compatibility branches conservatively. Do not guess
+    # which Office version will select a branch or rewrite its transition.
+    mc = '{http://schemas.openxmlformats.org/markup-compatibility/2006}'
+    transitions = tree.findall(P + 'transition') + tree.findall(mc + 'AlternateContent//' + P + 'transition')
+    return {'advance_after': [t.get('advTm') for t in transitions if t.get('advTm') is not None],
+            'use_timings': use_timings}
+
+
+def require_manual_advance(advance, page):
+    if not isinstance(advance, dict) or not isinstance(advance.get('advance_after'), list):
+        raise ValidationError(f'第{page}页缺少自动翻页检查依据；请重新检查当前输入')
+    if advance['advance_after'] and advance.get('use_timings') is not False:
+        setting = '启用计时' if advance.get('use_timings') is True else '未能确认计时已关闭'
+        raise ValidationError(f'第{page}页存在自动翻页（advTm={advance["advance_after"]}，{setting}），'
+                              '与人工点击揭示冲突；须单独处理放映设置，原切换保持不变')
+
+
 def parse_fade_timing(tree):
     """Read final OOXML, not the proposed plan. Return settled click states."""
     timing = tree.find(P+'timing')
     shapes = _top_shapes(tree)
     if timing is None:
         return []
+    clock_ids = [n.get('id', '') for n in timing.iter(P + 'cTn')]
+    if any(not value or not value.isascii() or not value.isdecimal() or int(value) > 4294967295
+           for value in clock_ids) or len({int(value) for value in clock_ids}) != len(clock_ids):
+        raise ValidationError('动画时间节点编号须为有效且不重复的无符号32位整数')
     if tree.findall('.//'+P+'audio') or tree.findall('.//'+P+'video'):
         raise ValidationError('后台时间轴不支持音视频播放；不得以静态状态验收')
     if timing.find('.//'+P+'seq') is None:
@@ -201,10 +242,13 @@ def make_fade_timing(effects):
 def write_timing_file(source,output,plan):
     parts=_parts(source); mapped={parts[s['page']-1]:s for s in plan['slides']}
     with zipfile.ZipFile(source) as a,zipfile.ZipFile(output,'w') as b:
+        use_timings = presentation_uses_timings(a)
         for item in a.infolist():
             data=a.read(item.filename);entry=mapped.get(item.filename)
             if entry and (entry['effects'] or entry.get('replace_targets')):
-                tree=etree.fromstring(data);prior=parse_fade_timing(tree)
+                tree=etree.fromstring(data)
+                require_manual_advance(inspect_slide_advance(tree, use_timings), entry['page'])
+                prior=parse_fade_timing(tree)
                 top=list(_top_shapes(tree));replace={top[i-1] for i in entry.get('replace_targets',[])}
                 retained=[e for e in prior if e['shape_id'] not in replace]
                 # Retain click boundaries when the original click leader was
@@ -223,8 +267,11 @@ def write_timing_file(source,output,plan):
 def read_click_states(path):
     pages=[]
     with zipfile.ZipFile(path) as z:
+        use_timings = presentation_uses_timings(z)
         for page,part in enumerate(_parts(path),1):
             tree=etree.fromstring(z.read(part));effects=parse_fade_timing(tree);top=_top_shapes(tree)
+            if effects:
+                require_manual_advance(inspect_slide_advance(tree, use_timings), page)
             for tag in ('audio','video','oleObj','control','contentPart'):
                 if tree.find('.//'+P+tag) is not None:
                     raise ValidationError(f'第{page}页包含未支持的动态对象{tag}')
@@ -503,6 +550,10 @@ def validate_teaching_intent(entry, valid_ids):
         if not isinstance(unit['purpose'],str) or not unit['purpose'].strip():
             raise ValidationError('每个教学单元需具体信息或操作目的，不能用装饰凑点击')
         previous=step;seen.update(ids)
+    missing = set(valid_ids) - seen
+    if missing:
+        raise ValidationError('teaching_units需覆盖全部实际动画对象及初始静态对象；'
+                              '未归属的顶层对象ID：' + ', '.join(map(str, sorted(missing))))
     return units
 
 

@@ -54,6 +54,8 @@ def inspect_pptx(path: str | Path) -> dict[str, Any]:
     parts = slide_parts(path)
     pages = []
     with zipfile.ZipFile(path) as z:
+        from .background_ppt import presentation_uses_timings, inspect_slide_advance
+        use_timings = presentation_uses_timings(z)
         for index, (slide, part) in enumerate(zip(prs.slides, parts), 1):
             root = etree.fromstring(z.read(part))
             timing = root.find(f"{P}timing")
@@ -66,7 +68,8 @@ def inspect_pptx(path: str | Path) -> dict[str, Any]:
             pages.append({"page": index, "part": part, "shapes": shapes,
                           "text_objects": inspect_text_objects(root),
                           "existing_targets": targets, "has_timing": timing is not None,
-                          "has_transition": root.find(f"{P}transition") is not None})
+                          "has_transition": root.find(f"{P}transition") is not None,
+                          "slide_advance": inspect_slide_advance(root, use_timings)})
     if not pages:
         raise ValidationError("empty presentation")
     return {"source_path": str(path), "source_sha256": file_sha256(path), "pages": pages,
@@ -183,8 +186,10 @@ def record_animation_plan(run_dir: str | Path, plan: dict[str, Any]) -> dict[str
         if not isinstance(effects, list) or not isinstance(replace, list) or len(replace) != len(set(replace)):
             raise ValidationError("effects and distinct replace_targets are required")
         valid_shapes = {s["shape"]: s for s in actual["shapes"]}
-        from .background_ppt import validate_teaching_intent
+        from .background_ppt import validate_teaching_intent, require_manual_advance
         validate_teaching_intent(entry, {s['shape_id'] for s in actual['shapes']})
+        if effects or actual['has_timing']:
+            require_manual_advance(actual.get('slide_advance'), page)
         for shape in replace:
             if type(shape) is not int or shape not in valid_shapes:
                 raise ValidationError("replacement target does not exist")
