@@ -70,7 +70,7 @@ def render_image_prompt(visible: list[str], plan: dict, page_number_policy: dict
     rows += ['', '【视觉风格】', '；'.join(x.rstrip('。；; ') for x in visual_style) + '。']
 
     constraints = resolved(unique(plan['constraints']))
-    constraints.append('画面全部文字仅来自给定的阶段1逐页文字，逐字保留标点、数字、单位和否定词；不增加标签、徽记、包装字或自动页码')
+    constraints.append('画面全部文字仅来自给定的阶段1逐页文字，逐字保留标点、数字、单位和否定词；不增加未经批准的标签、徽记或包装字，不自动生成页码')
     rows += ['', '【关键约束】', '；'.join(x.rstrip('。；; ') for x in constraints) + '。']
     return '\n'.join(rows)
 
