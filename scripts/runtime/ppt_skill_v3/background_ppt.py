@@ -587,7 +587,9 @@ def check_visibility_rules(pages,plan):
             sid=rule.get('shape_id');step=rule.get('reveal_click')
             if type(sid) is not int or sid not in valid or sid in seen or type(step) is not int or not 0<=step<len(actual['states']):raise ValidationError('可见性契约对象或点击编号无效')
             if rule.get('role') not in ('prompt','answer','explanation','illustration') or not str(rule.get('reason','')).strip():raise ValidationError('可见性规则缺少实际语义角色或理由')
-            if rule['role']=='answer' and step==0:raise ValidationError('答案对象不能承诺初始可见；比较材料应明确标为prompt')
+            # answer means a response deliberately withheld for independent judgement.
+            # Known examples/review material use prompt or explanation by teaching purpose.
+            if rule['role']=='answer' and step==0:raise ValidationError('待独立判断后揭示的answer不能初始可见；已知示范或复盘材料须按实际用途标为prompt/explanation并说明理由')
             seen.add(sid)
             if reveal.get(sid,0)!=step:raise ValidationError(f"第{actual['page']}页对象{sid}的实际出现点击与语义契约不一致")
         check_teaching_intent(actual,entry)

@@ -4,7 +4,9 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageOps
+from PIL import Image
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen.canvas import Canvas
 
 from .deliverable_naming import project_deliverable_relpaths
 from .dev_mode import require_dev_fixture_enabled
@@ -50,9 +52,8 @@ def build_image_deck(run_dir: str | Path, *, allow_dev_fixture: bool = False) ->
     deck_rel = relpaths["stage2_image_deck"]
     deck_path = root / deck_rel
     deck_path.parent.mkdir(parents=True, exist_ok=True)
-    first_page, *rest_pages = pages
     try:
-        first_page.save(deck_path, "PDF", save_all=True, append_images=rest_pages, resolution=PDF_RESOLUTION_DPI)
+        _write_image_pages_pdf(deck_path, page_entries)
     finally:
         for page in pages:
             page.close()
@@ -98,40 +99,47 @@ def build_image_deck(run_dir: str | Path, *, allow_dev_fixture: bool = False) ->
 
 def _pdf_page_from_image(image_path: Path) -> dict[str, Any]:
     with Image.open(image_path) as original:
-        image = ImageOps.exif_transpose(original)
-        if image.mode == "RGBA" or "transparency" in image.info:
-            rgba = image.convert("RGBA")
-            source = Image.new("RGB", rgba.size, "white")
-            source.paste(rgba, mask=rgba.getchannel("A"))
-        else:
-            source = image.convert("RGB")
-
+        source = original.copy()
         source_width, source_height = source.size
-        if source_width > PDF_CANVAS_SIZE[0] or source_height > PDF_CANVAS_SIZE[1]:
-            fitted = ImageOps.contain(source, PDF_CANVAS_SIZE, Image.Resampling.LANCZOS)
-            resize_mode = "downscaled_to_fit"
-            warnings = [
-                f"stage2_pdf_downscaled_from_{source_width}x{source_height}_to_{fitted.width}x{fitted.height}",
-            ]
-        else:
-            fitted = source.copy()
-            resize_mode = "none"
-            warnings = []
-        page = Image.new("RGB", PDF_CANVAS_SIZE, "white")
-        offset = ((PDF_CANVAS_SIZE[0] - fitted.width) // 2, (PDF_CANVAS_SIZE[1] - fitted.height) // 2)
-        page.paste(fitted, offset)
+        factor = min(1.0, PDF_CANVAS_SIZE[0] / source_width, PDF_CANVAS_SIZE[1] / source_height)
+        placed_width = round(source_width * factor)
+        placed_height = round(source_height * factor)
         return {
-            "page": page,
+            "page": source,
             "source": str(image_path),
             "source_width_px": source_width,
             "source_height_px": source_height,
             "canvas_width_px": PDF_CANVAS_SIZE[0],
             "canvas_height_px": PDF_CANVAS_SIZE[1],
-            "placed_width_px": fitted.width,
-            "placed_height_px": fitted.height,
-            "resize_mode": resize_mode,
-            "warnings": warnings,
+            "placed_width_px": placed_width,
+            "placed_height_px": placed_height,
+            "embedded_width_px": source_width,
+            "embedded_height_px": source_height,
+            "resize_mode": "pdf_placement_only" if factor < 1 else "none",
+            "raster_resampled": False,
+            "warnings": [],
         }
+
+
+def _write_image_pages_pdf(path: Path, entries: list[dict[str, Any]]) -> None:
+    """Keep the existing page geometry while embedding every original pixel losslessly."""
+    points_per_canvas_pixel = 72 / PDF_RESOLUTION_DPI
+    canvas_width, canvas_height = PDF_CANVAS_SIZE
+    pdf = Canvas(str(path), pagesize=(canvas_width * points_per_canvas_pixel,
+                                     canvas_height * points_per_canvas_pixel), pageCompression=1)
+    for entry in entries:
+        width, height = entry['placed_width_px'], entry['placed_height_px']
+        left = (canvas_width - width) // 2
+        top = (canvas_height - height) // 2
+        pdf.setFillColorRGB(1, 1, 1)
+        pdf.rect(0, 0, canvas_width * points_per_canvas_pixel,
+                 canvas_height * points_per_canvas_pixel, fill=1, stroke=0)
+        pdf.drawImage(ImageReader(entry['page']), left * points_per_canvas_pixel,
+                      (canvas_height - top - height) * points_per_canvas_pixel,
+                      width=width * points_per_canvas_pixel, height=height * points_per_canvas_pixel,
+                      mask='auto')
+        pdf.showPage()
+    pdf.save()
 
 
 def _manifest_entry_without_page(entry: dict[str, Any]) -> dict[str, Any]:

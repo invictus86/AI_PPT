@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .canonical_images import CANONICAL_POLICIES, canonicalize_image, parse_size
+from .canonical_images import CANONICAL_POLICIES, parse_size
 from .dev_mode import require_dev_fixture_enabled
 from .events import append_event
 from .image_prompt_docs import record_prompt_document, refresh_prompt_delivery, PROMPTS_RELPATH, atomic_json
@@ -79,8 +79,6 @@ def record_image_result(
     if generation_route == IMAGE_ROUTE_CODEX_IMAGE_GEN and not dev_fixture:
         from .image_native import validate_native_request
         validate_native_request(root, packet)
-        if (canonical_policy or packet.get('canonical_policy') or 'preserve_api_raster') != 'preserve_api_raster':
-            raise ValidationError('内置生图必须保留原始像素，不得通过裁切、缩放冒充达标')
     expected_tool = route_tool(generation_route)
     if packet.get("execution_tool") != expected_tool:
         raise ValidationError(f"packet.execution_tool must be {expected_tool}")
@@ -107,6 +105,10 @@ def record_image_result(
     resolved_canonical_policy = canonical_policy or packet.get("canonical_policy") or "preserve_api_raster"
     if resolved_canonical_policy not in CANONICAL_POLICIES:
         raise ValidationError(f"unsupported canonical image policy: {resolved_canonical_policy}")
+    if resolved_canonical_policy != "preserve_api_raster":
+        raise ValidationError('新阶段2正式图片必须保留原始像素，不得缩放、裁切或补边；历史归一化记录仅保留读取')
+    if canonical_size is not None or packet.get("canonical_size") is not None:
+        raise ValidationError('正式图片不接受归一化尺寸；应按真实返回像素记录并独立验收')
     if dev_fixture:
         if generation_route == IMAGE_ROUTE_OPENAI_IMAGE_API:
             api_call_id = api_call_id or tool_call_id or f"dev-api-call-{generation_id}"
@@ -143,37 +145,20 @@ def record_image_result(
     postprocess_policy = _postprocess_policy(packet)
 
     recorded_image_path = image_path
-    postprocess_manifest_path: Path | None = None
-    postprocess: dict[str, Any] | None = None
-    if resolved_canonical_policy == "normalize_at_stage2":
-        if not isinstance(canonical_size, str) or not canonical_size.strip():
-            canonical_size = _canonical_size_from_packet(packet)
-        target_size = parse_size(canonical_size)
-        canonical_dirname = "canonical_api_outputs" if generation_route == IMAGE_ROUTE_OPENAI_IMAGE_API else "canonical_image_gen_outputs"
-        canonical_dir = root / "_state" / "阶段2" / canonical_dirname
-        canonical_output = canonical_dir / f"{Path(image_path).stem}.png"
-        postprocess = canonicalize_image(image_path, canonical_output, target_size=target_size, method=canonical_method)
-        recorded_image_path = canonical_output
-        postprocess_manifest_path = root / "_state" / "阶段2" / "postprocess" / f"{packet.get('packet_id', Path(image_path).stem)}.json"
-        postprocess_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(postprocess_manifest_path, _relativize_postprocess(root, postprocess))
-
     recorded_suffix = recorded_image_path.suffix.lower()
     rel_image_path = _visible_image_relpath_for_purpose(stage, purpose, slide_index, option_id, recorded_suffix)
     result_path = _result_path(root, stage, purpose, slide_index, option_id)
-    dimensions = input_dimensions if recorded_image_path == image_path else read_image_dimensions(recorded_image_path)
-    postprocess_size_warnings = _postprocess_size_warnings(input_dimensions, dimensions, postprocess is not None)
+    dimensions = input_dimensions
     size_review = _size_review(
         dimensions,
         target_size_contract,
         preferred_size_contract,
         target_tolerance_contract,
-        extra_warnings=postprocess_size_warnings,
     )
     image_sha256 = _sha256_file(recorded_image_path)
     resolved_response_format = _image_api_response_format(packet, response_format)
     if generation_route == IMAGE_ROUTE_CODEX_IMAGE_GEN and not image_gen_evidence_path:
-        evidence_image_path = image_path if postprocess is not None else recorded_image_path
+        evidence_image_path = recorded_image_path
         evidence_image_sha = _sha256_file(evidence_image_path)
         image_gen_evidence_path = _write_image_gen_evidence(
             root,
@@ -250,21 +235,6 @@ def record_image_result(
         )
     else:
         result["image_gen_evidence_path"] = image_gen_evidence_path
-    if postprocess is not None and postprocess_manifest_path is not None:
-        result["original_api_output"] = {
-            "path": _relative_or_text(root, image_path),
-            "image_sha256": _sha256_file(image_path),
-            "width_px": input_dimensions["width_px"],
-            "height_px": input_dimensions["height_px"],
-            "aspect_ratio": input_dimensions["aspect_ratio"],
-        }
-        result["postprocess"] = {
-            "type": "canonical_image_postprocess",
-            "manifest_path": _relative_or_text(root, postprocess_manifest_path),
-            "method": canonical_method,
-            "target_size": postprocess["target_size"],
-            "postprocess_policy": postprocess_policy,
-        }
     for field in ("generation_request_id", "image_style_hash", "image_style_snapshot", "generation_basis"):
         if packet.get(field) is not None:
             result[field] = packet[field]
