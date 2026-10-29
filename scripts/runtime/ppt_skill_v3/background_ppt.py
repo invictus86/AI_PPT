@@ -289,7 +289,7 @@ def read_click_states(path):
 
 
 def extract_embedded_fonts(source,directory):
-    """Uncompressed EOT only; no font installation or font substitution."""
+    """Validated EOT/MTX; original glyphs, no font installation or substitution."""
     from fontTools.ttLib import TTFont
     paths=[];aliases={};suffix=uuid.uuid4().hex[:10]
     with zipfile.ZipFile(source) as z:
@@ -306,13 +306,8 @@ def extract_embedded_fonts(source,directory):
                     records.append((name,face,etree.QName(variant).localname))
         for name,face,variant in records:
             raw=z.read(name)
-            if len(raw)<40:raise ValidationError('嵌入字体数据截断')
-            size=struct.unpack_from('<I',raw,4)[0]
-            if not 0<size<=len(raw):raise ValidationError('嵌入字体大小无效')
-            data=raw[-size:]
-            if data[:4] not in (b'\x00\x01\x00\x00',b'OTTO',b'ttcf'):
-                raise ValidationError('压缩或加密嵌入字体未支持，不允许静默替换')
-            if data[:4]==b'ttcf':raise ValidationError('嵌入字体集合尚未支持')
+            from .embedded_fonts import decode_font
+            data,_=decode_font(raw)
             stream=io.BytesIO(data)
             stream.name='<embedded-font-memory>'
             font=TTFont(stream, lazy=True, recalcBBoxes=False, recalcTimestamp=False)
@@ -366,9 +361,8 @@ def audit_embedded_glyphs(source):
                 rid=variant.get(R+'id')
                 if not rid:continue
                 target=targets.get(rid,'');part=target.lstrip('/') if target.startswith('/') else posixpath.normpath(posixpath.join('ppt',target))
-                raw=z.read(part);size=struct.unpack_from('<I',raw,4)[0];data=raw[-size:]
-                if data[:4] not in (b'\x00\x01\x00\x00',b'OTTO'):
-                    raise ValidationError('嵌入字体字形审计不支持压缩或集合字体')
+                from .embedded_fonts import decode_font
+                data,_=decode_font(z.read(part))
                 font=TTFont(io.BytesIO(data));faces[(meta.get('typeface'),etree.QName(variant).localname)]=set((font.getBestCmap() or {}).keys());font.close()
         for page,part in enumerate(_parts(source),1):
             tree=etree.fromstring(z.read(part))
@@ -400,7 +394,9 @@ def render_hidden(source, directory, *, timeout=600):
     capability = verification_capability('pptx')
     if not capability['available']:
         return skipped_verification(source, capability)
-    fingerprint = environment_fingerprint([Path(__file__), Path(__file__).with_name('background_render.ps1')])
+    from .embedded_fonts import decoder_files
+    renderer_files = [Path(__file__), Path(__file__).with_name('background_render.ps1'), *decoder_files()]
+    fingerprint = environment_fingerprint(renderer_files)
     cache_file = directory/'render_cache.json'
     with resource_slot('render-output:' + path_identity(directory)):
         if cache_file.is_file():
@@ -413,7 +409,7 @@ def render_hidden(source, directory, *, timeout=600):
         # the last barrier against old callers in this Windows login session.
         with resource_slot('office-background') as slot:
             result = _render_hidden(source,directory,timeout=timeout)
-            if environment_fingerprint([Path(__file__), Path(__file__).with_name('background_render.ps1')]) != fingerprint:
+            if environment_fingerprint(renderer_files) != fingerprint:
                 raise ValidationError('渲染期间字体或Office环境变化，旧证据不能缓存')
             result.update(environment_fingerprint=fingerprint, queue_seconds=slot['queue_seconds'])
             write_json(cache_file,result)
@@ -469,6 +465,40 @@ def _render_hidden(source, directory, *, timeout=600):
         'images':images,'created_at':now_iso()}
 
 
+def render_source_hidden(source, directory, *, force_font_fallback=False):
+    from .resources import resource_slot, path_identity
+    with resource_slot('source-reading:' + path_identity(Path(directory).resolve())):
+        return _render_source_hidden(source, directory, force_font_fallback=force_font_fallback)
+
+
+def _render_source_hidden(source, directory, *, force_font_fallback=False):
+    """Content-reading entry; never used for animation or final visual acceptance."""
+    from .source_font_inspection import prepare_source_copy
+    source=Path(source).resolve(); directory=Path(directory).resolve()
+    copy, report=prepare_source_copy(source, directory/'_font_recovery', force_fallback=force_font_fallback)
+    try:
+        result=dict(render_hidden(copy,directory))
+    except ValidationError as exc:
+        if 'Temporary embedded font registration failed' in str(exc) and not force_font_fallback:
+            write_json(directory/'_font_recovery/first_render_failure.json', {'reason': str(exc)})
+            return _render_source_hidden(source, directory, force_font_fallback=True)
+        report.update(render_status='failed', render_failure=str(exc))
+        write_json(directory/'_font_recovery/font_recovery.json',report)
+        raise
+    report.update(render_status='skipped' if result.get('verified') is False else 'exported',
+                  embedded_fonts_loaded=result.get('embedded_fonts_loaded'),
+                  render_proof=result.get('render_proof'))
+    write_json(directory/'_font_recovery/font_recovery.json',report)
+    result.update(input_sha256=report['source_sha256'], source_font_recovery=report,
+                  original_font_appearance_verified=False, complete_content_review=False)
+    if report['content_only']:
+        result.update(verified=False, verification_scope='content_inspection_only')
+    if file_sha256(source)!=report['source_sha256']:
+        raise ValidationError('资料核对期间源文件发生变化')
+    write_json(directory/'source_render_manifest.json',result)
+    return result
+
+
 def extract_background_material(source,directory):
     """Stage 0: ordered editable content, notes, original media, and real pages."""
     from .teaching_animation import inspect_pptx
@@ -488,9 +518,15 @@ def extract_background_material(source,directory):
             target=media_dir/posixpath.basename(name)
             if any(x['name']==target.name for x in media):raise ValidationError('媒体文件名冲突')
             target.write_bytes(z.read(name));media.append({'name':target.name,'path':str(target),'sha256':file_sha256(target)})
-    render=render_hidden(source,directory/'previews')
-    result={'source_sha256':info['source_sha256'],'source_path':str(source),'pages':info['pages'],'media':media,'render':render,
+    result={'source_sha256':info['source_sha256'],'source_path':str(source),'pages':info['pages'],'media':media,
         'complete_content_review':False,'notice':'XML和媒体已提取；必须实际逐页查看预览及图片内字，不能自动宣布完整内容审阅。','created_at':now_iso()}
+    write_json(directory/'material_manifest.json',result)
+    try:
+        result['render']=render_source_hidden(source,directory/'previews')
+    except Exception as exc:
+        result['render']={'verified':False, 'status':'failed', 'reason':str(exc)}
+        write_json(directory/'material_manifest.json',result)
+        raise
     if file_sha256(source)!=info['source_sha256']:raise ValidationError('资料提取期间源文件发生变化')
     write_json(directory/'material_manifest.json',result)
     return result

@@ -1,4 +1,6 @@
 # Locked from the verified Windows x64 portable environment.
+# Optional MTX runtime: Node.js >=18 (PATH, _local/node/node.exe, or PPT_SKILL_NODE).
+# JS decoder is vendored at runtime/ppt_skill_v3/vendor/mtx-decompressor (1.8.0, MPL-2.0).
 charset-normalizer==3.5.2
 fonttools==4.66.1
 lxml==6.1.1

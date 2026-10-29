@@ -539,8 +539,8 @@ def _execute(args, parser):
         print(json.dumps(result, ensure_ascii=False))
         return 0
     if args.command == "render-ppt-background":
-        from .background_ppt import render_hidden
-        result = render_hidden(args.input_pptx, args.output_dir)
+        from .background_ppt import render_source_hidden
+        result = render_source_hidden(args.input_pptx, args.output_dir)
         write_json(Path(args.output_dir)/"render_manifest.json", result)
         print(json.dumps(result, ensure_ascii=False))
         return 0
