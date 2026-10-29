@@ -159,7 +159,8 @@ def record_image_generation_batch_result(run_dir: str | Path, packet: dict[str, 
             raise ValidationError(f"image_result.{field} is required for image generation batch record")
     route_result_id_field = "image_gen_result_id" if route == "codex_image_gen" else "image_api_result_id"
     route_call_id_field = "tool_call_id" if route == "codex_image_gen" else "api_call_id"
-    for field in (route_call_id_field, route_result_id_field):
+    required_ids = () if route == 'codex_image_gen' and result.get('native_evidence_mode') == 'host_return_no_ids' else (route_call_id_field, route_result_id_field)
+    for field in required_ids:
         value = result.get(field)
         if not isinstance(value, str) or not value.strip():
             raise ValidationError(f"image_result.{field} is required for {route} batch record")

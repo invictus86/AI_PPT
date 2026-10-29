@@ -347,7 +347,8 @@ def build_parser() -> argparse.ArgumentParser:
     image_result_parser.add_argument("--image", required=True)
     image_result_parser.add_argument("--provider", required=True)
     image_result_parser.add_argument("--source", required=True)
-    image_result_parser.add_argument("--generation-id", required=True)
+    image_result_parser.add_argument("--generation-id")
+    image_result_parser.add_argument("--native-return-evidence", help="已核实的宿主原始返回与冻结请求证据，未返回编号时使用")
     image_result_parser.add_argument("--tool-call-id")
     image_result_parser.add_argument("--image-gen-result-id")
     image_result_parser.add_argument("--api-call-id")
@@ -854,6 +855,7 @@ def _execute(args, parser):
             args.provider,
             args.source,
             args.generation_id,
+            native_return_evidence=args.native_return_evidence,
             tool_call_id=args.tool_call_id,
             image_gen_result_id=args.image_gen_result_id,
             api_call_id=args.api_call_id,

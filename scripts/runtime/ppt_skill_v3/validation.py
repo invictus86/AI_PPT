@@ -1183,9 +1183,6 @@ def validate_image_result(data: Any, *, production: bool = True) -> dict[str, An
         "provider",
         "source",
         "execution_tool",
-        "generation_id",
-        "tool_call_id",
-        "image_gen_result_id",
         "execution_group_id",
         "prompt_hash",
         "image_sha256",
@@ -1194,6 +1191,15 @@ def validate_image_result(data: Any, *, production: bool = True) -> dict[str, An
         "created_at",
     ):
         _require_string(result, field, "image_result")
+    idless = result.get('native_evidence_mode') == 'host_return_no_ids' and image_generation_route == CODEX_IMAGE_GEN_TOOL
+    for field in ('generation_id', 'tool_call_id', 'image_gen_result_id'):
+        if idless:
+            if result.get(field) is not None:
+                raise ValidationError(f'image_result.{field} must be null when not returned')
+        else:
+            _require_string(result, field, 'image_result')
+    if idless:
+        _require_string(result, 'native_return_evidence_path', 'image_result')
     expected_tool = IMAGE_GENERATION_TOOL_BY_ROUTE[image_generation_route]
     if result["execution_tool"] != expected_tool:
         raise ValidationError(f"image_result.execution_tool must be {expected_tool}")
@@ -1259,8 +1265,9 @@ def validate_image_result(data: Any, *, production: bool = True) -> dict[str, An
             elif "response_format" in result:
                 _require_string(result, "response_format", "image_result")
         else:
-            _require_string(result, "tool_call_id", "image_result")
-            _require_string(result, "image_gen_result_id", "image_result")
+            if not idless:
+                _require_string(result, "tool_call_id", "image_result")
+                _require_string(result, "image_gen_result_id", "image_result")
             _require_string(result, "image_gen_evidence_path", "image_result")
     return result
 

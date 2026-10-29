@@ -50,9 +50,10 @@ def record_image_result(
     image_file: str | Path,
     provider: str,
     source: str,
-    generation_id: str,
+    generation_id: str | None,
     *,
     tool_call_id: str | None = None,
+    native_return_evidence: str | None = None,
     image_gen_result_id: str | None = None,
     api_call_id: str | None = None,
     image_api_result_id: str | None = None,
@@ -109,6 +110,13 @@ def record_image_result(
         raise ValidationError('新阶段2正式图片必须保留原始像素，不得缩放、裁切或补边；历史归一化记录仅保留读取')
     if canonical_size is not None or packet.get("canonical_size") is not None:
         raise ValidationError('正式图片不接受归一化尺寸；应按真实返回像素记录并独立验收')
+    host_return = None
+    if native_return_evidence:
+        if dev_fixture or generation_route != IMAGE_ROUTE_CODEX_IMAGE_GEN:
+            raise ValidationError('宿主返回证据只适用于正式内置生图')
+        if any((generation_id, tool_call_id, image_gen_result_id, image_gen_evidence_path)):
+            raise ValidationError('无编号证据不得与编号或其他证据混用')
+        host_return = _validate_native_return_evidence(root, packet_path, packet, image_path, native_return_evidence)
     if dev_fixture:
         if generation_route == IMAGE_ROUTE_OPENAI_IMAGE_API:
             api_call_id = api_call_id or tool_call_id or f"dev-api-call-{generation_id}"
@@ -128,7 +136,7 @@ def record_image_result(
                 raise ValidationError("production image_result requires image_api_result_id")
             tool_call_id = tool_call_id or api_call_id
             image_gen_result_id = image_gen_result_id or image_api_result_id
-        else:
+        elif host_return is None:
             image_gen_result_id = image_gen_result_id or generation_id
             if not isinstance(tool_call_id, str) or not tool_call_id.strip():
                 raise ValidationError("production codex_image_gen result requires tool_call_id")
@@ -170,6 +178,7 @@ def record_image_result(
             tool_call_id=tool_call_id,
             image_gen_result_id=image_gen_result_id,
             model=model,
+            host_return=host_return,
         )
     result = {
         "schema_version": "2.0",
@@ -235,6 +244,9 @@ def record_image_result(
         )
     else:
         result["image_gen_evidence_path"] = image_gen_evidence_path
+        if host_return is not None:
+            result['native_evidence_mode'] = 'host_return_no_ids'
+            result['native_return_evidence_path'] = _relative_or_text(root, Path(native_return_evidence))
     for field in ("generation_request_id", "image_style_hash", "image_style_snapshot", "generation_basis"):
         if packet.get(field) is not None:
             result[field] = packet[field]
@@ -277,6 +289,7 @@ def record_image_result(
         return result
 
     state = read_state(root)
+    refresh_needed = False
     state["required_actor"] = "main_controller"
     state["user_artifacts"]["stage2_image_prompts"] = PROMPTS_RELPATH
     if purpose == "cover_option":
@@ -288,7 +301,7 @@ def record_image_result(
             state["user_artifacts"]["stage2_cover_options"] = str(review.relative_to(root))
             state["quality"]["stage2_cover_options"] = "pending_controller_text_review"
             state["next_required_action"] = "主控逐张对照阶段1每页干净逐字稿检查四封面文字，record-stage2-visual-qa记录全部通过后再展示给用户"
-            refresh_prompt_delivery(root)
+            refresh_needed = True
         else:
             state["next_required_action"] = "继续记录剩余封面候选图片结果"
     elif purpose == "trial_first5":
@@ -300,14 +313,14 @@ def record_image_result(
             state["user_artifacts"]["stage2_trial_first5"] = str(summary.relative_to(root))
             state["quality"]["stage2_trial_first5"] = "pending_controller_text_review"
             state["next_required_action"] = "主控逐张对照阶段1每页干净逐字稿检查试样（含封面），record-stage2-visual-qa记录全部通过后再展示给用户"
-            refresh_prompt_delivery(root)
+            refresh_needed = True
         else:
             state["next_required_action"] = "继续记录剩余阶段2B试样图片结果"
     elif stage == "stage2":
         if _stage2_formal_results_complete(root):
             state["status"] = "stage2_results_complete"
             state["next_required_action"] = "阶段2正式整页图片已覆盖全部页面，可以打包图片版 PDF"
-            refresh_prompt_delivery(root)
+            refresh_needed = True
         else:
             state["status"] = f"{stage}_image_result_recorded"
             state["next_required_action"] = "主控大模型检查阶段2图片结果，全部合格后打包图片版 PDF"
@@ -317,6 +330,8 @@ def record_image_result(
         state["required_actor"] = "main_controller"
         state["next_required_action"] = "图片已成功保存，提示词文档待修复；先重建文档，不要重复生图：" + document_error
     write_state(root, state)
+    if refresh_needed:
+        refresh_prompt_delivery(root)
     append_event(
         root,
         "image_result_recorded",
@@ -634,10 +649,11 @@ def _write_image_gen_evidence(
     image_path: Path,
     *,
     image_sha256: str,
-    generation_id: str,
+    generation_id: str | None,
     tool_call_id: str | None,
     image_gen_result_id: str | None,
     model: str | None,
+    host_return: dict[str, Any] | None = None,
 ) -> str:
     evidence_path = evidence_path_for_route(root, packet, IMAGE_ROUTE_CODEX_IMAGE_GEN)
     evidence = {
@@ -659,11 +675,42 @@ def _write_image_gen_evidence(
         "output_image_path": _relative_or_text(root, image_path),
         "image_sha256": image_sha256,
         "created_at": now_iso(),
-        "evidence_kind": "controller_recorded_codex_image_gen_tool_call",
+        "evidence_kind": "host_return_no_ids" if host_return else "controller_recorded_codex_image_gen_tool_call",
     }
+    if host_return is not None:
+        evidence['host_return'] = host_return
+        evidence['missing_identifiers'] = ['generation_id', 'tool_call_id', 'image_gen_result_id']
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(evidence_path, evidence)
     return _relative_or_text(root, evidence_path)
+
+
+def _validate_native_return_evidence(root: Path, packet_path: Path, packet: dict[str, Any], image_path: Path, evidence_file: str) -> dict[str, Any]:
+    """Bind an ID-less native return to the frozen request and unchanged original bytes."""
+    path = _state_path(root, evidence_file, 'native_return_evidence')
+    evidence = read_json(path)
+    if evidence.get('controller_reviewed') is not True or evidence.get('tool') != 'image_gen.imagegen':
+        raise ValidationError('宿主返回证据须经主控核实并注明真实工具')
+    if evidence.get('missing_identifiers') != ['generation_id', 'tool_call_id', 'image_gen_result_id']:
+        raise ValidationError('宿主未返回编号时须明确记录全部缺失项')
+    if evidence.get('packet_sha256') != _sha256_file(packet_path) or evidence.get('prompt_hash') != packet.get('prompt_hash'):
+        raise ValidationError('宿主返回证据与冻结请求不一致')
+    original = Path(evidence.get('original_image_path', ''))
+    if not original.is_absolute() or not original.is_file() or _sha256_file(original) != _sha256_file(image_path):
+        raise ValidationError('宿主原图必须存在且与待登记图片字节一致')
+    if evidence.get('image_sha256') != _sha256_file(original):
+        raise ValidationError('宿主原图指纹不一致')
+    record = _state_path(root, evidence.get('return_record_path', ''), 'return_record_path')
+    if not record.is_file() or evidence.get('return_record_sha256') != _sha256_file(record):
+        raise ValidationError('实际宿主返回记录缺失或指纹不一致')
+    returned = read_json(record)
+    if returned.get('tool') != 'image_gen.imagegen' or returned.get('original_image_path') != str(original):
+        raise ValidationError('实际宿主返回记录与原图不一致')
+    if returned.get('generation_request_id') != packet.get('generation_request_id') or returned.get('prompt_hash') != packet.get('prompt_hash'):
+        raise ValidationError('实际宿主返回记录与请求不一致')
+    if str(original) not in returned.get('output_hint', ''):
+        raise ValidationError('宿主输出提示中没有原图路径')
+    return evidence
 
 
 def _validate_image_gen_evidence(root: Path, packet: dict[str, Any], result: dict[str, Any]) -> None:
