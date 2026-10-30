@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     depth_parser.add_argument("--run-dir", required=True)
     depth_parser.add_argument("--scope", choices=["planning", "deck", "package"], required=True)
     depth_parser.add_argument("--review", required=True)
-    animation_start_parser = subparsers.add_parser("inspect-animation", help="Inspect a supplied editable PPTX after explicit animation request.")
+    animation_start_parser = subparsers.add_parser("inspect-animation", help="[旧任务恢复] 重新检查已有旧动画任务；新任务使用 animation / editable。")
     animation_start_parser.add_argument("--run-dir", required=True)
     animation_start_parser.add_argument("--input-pptx", required=True)
     animation_start_parser.add_argument("--evidence", required=True)
@@ -111,20 +111,20 @@ def build_parser() -> argparse.ArgumentParser:
     animation_start_parser.add_argument('--optimize-text', action='store_true', help='Enable authorized mild text presentation optimization and source-backed conversion restoration; includes common font matching.')
     font_candidates_parser = subparsers.add_parser('list-font-candidates', help='List common installed non-premium font faces covering exact UTF-8 text; no automatic visual verdict.')
     font_candidates_parser.add_argument('--text-file', required=True)
-    animation_plan_parser = subparsers.add_parser("record-animation-plan", help="Record a controller-reviewed per-page teaching animation plan.")
+    animation_plan_parser = subparsers.add_parser("record-animation-plan", help="[旧任务恢复] 登记历史动画计划；新任务使用 animation。")
     animation_plan_parser.add_argument("--run-dir", required=True)
     animation_plan_parser.add_argument("--plan", required=True)
-    animation_previews_parser = subparsers.add_parser("export-animation-previews", help="Render every actual PPTX page for teaching-animation review.")
+    animation_previews_parser = subparsers.add_parser("export-animation-previews", help="[旧任务详细检查] 后台导出页面；新修订使用 editable previews。")
     animation_previews_parser.add_argument("--run-dir", required=True)
-    animation_execute_parser = subparsers.add_parser("apply-teaching-animation", help="Save a separate PPTX; allow only planned timing and authorized sentence font/bold repairs.")
+    animation_execute_parser = subparsers.add_parser("apply-teaching-animation", help="[旧任务恢复] 按旧计划原位更新PPTX；保留快照及原有成品命名。")
     animation_execute_parser.add_argument("--run-dir", required=True)
-    animation_review_parser = subparsers.add_parser("record-animation-background-review", help="Accept every background click-state image, final OOXML and semantic visibility rules.")
+    animation_review_parser = subparsers.add_parser("record-animation-background-review", help="[旧任务恢复] 登记旧格式全部点击状态审阅。")
     animation_review_parser.add_argument("--run-dir", required=True)
     animation_review_parser.add_argument("--review", required=True)
-    animation_font_review_parser = subparsers.add_parser("record-animation-font-review", help="Record font/layout observations bound to every background click state; no foreground application.")
+    animation_font_review_parser = subparsers.add_parser("record-animation-font-review", help="[旧任务恢复] 登记旧格式字体排版审阅；新修订使用 editable review。")
     animation_font_review_parser.add_argument("--run-dir", required=True)
     animation_font_review_parser.add_argument("--review", required=True)
-    animation_states_parser = subparsers.add_parser("export-animation-states", help="Read final PPTX timing and render all click states without foreground Office/WPS.")
+    animation_states_parser = subparsers.add_parser("export-animation-states", help="[旧任务详细检查] 仅支持旧格式时间树的后台点击状态导出。")
     animation_states_parser.add_argument("--run-dir", required=True)
     ppt_background_parser = subparsers.add_parser("render-ppt-background", help="Render source PPTX pages with hidden windows only, for Stage 0 or standalone inspection.")
     ppt_background_parser.add_argument("--input-pptx", required=True)
@@ -500,8 +500,7 @@ def _execute(args, parser):
             result=editable.inspect(args.run_dir,args.input_pptx,args.evidence,optimize_text=args.optimize_text,
                                     repair_fonts=args.repair_fonts,match_reference_fonts=args.match_reference_fonts)
         elif op=='previews':
-            from .teaching_animation import export_animation_previews
-            result=export_animation_previews(args.run_dir)
+            result=editable.previews(args.run_dir)
         elif op=='plan': result=editable.record_plan(args.run_dir,read_json(args.file))
         elif op=='apply': result=editable.apply(args.run_dir)
         elif op=='previews-output': result=editable.output_previews(args.run_dir)
@@ -599,6 +598,8 @@ def _execute(args, parser):
         print(json.dumps(result, ensure_ascii=False))
         return 0
     if args.command in {"inspect-animation", "export-animation-previews", "record-animation-plan", "apply-teaching-animation", "record-animation-background-review", "record-animation-font-review", "export-animation-states"}:
+        from .legacy_animation import require_legacy_task
+        require_legacy_task(args.run_dir,source=args.input_pptx if args.command=='inspect-animation' else None)
         from .teaching_animation import start_animation, record_animation_plan, execute_animation, accept_background_review, export_animation_previews, accept_font_review
         if args.command == "inspect-animation":
             result = start_animation(args.run_dir, args.input_pptx, args.evidence, repair_fonts=args.repair_fonts,

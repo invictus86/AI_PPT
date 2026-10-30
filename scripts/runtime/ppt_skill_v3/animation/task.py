@@ -109,8 +109,9 @@ def apply_task(run_dir, task_id, plan_file):
     from ..resources import resource_slot, path_identity
     with resource_slot('animation-task:' + path_identity(task_dir(run_dir, task_id))):
         task = read_json(task_dir(run_dir, task_id) / 'task.json')
-        with resource_slot('editable-file:' + path_identity(task['source'])):
-            return _apply_task(run_dir, task_id, plan_file)
+        with resource_slot('editable-directory:' + path_identity(Path(task['source']).parent)):
+            with resource_slot('editable-file:' + path_identity(task['source'])):
+                return _apply_task(run_dir, task_id, plan_file)
 
 
 def _publish_name(folder, task):
@@ -167,11 +168,18 @@ def _apply_task(run_dir, task_id, plan_file):
         # A separate, unfinished editable revision must not be animated as accepted copy.
         state = _state(guard_run_dir(run_dir))
         edit = state.get('stage5_animation', {})
-        pending = edit.get('pending_text_issues', [])
-        excluded = {item['page'] for item in pending} | set(edit.get('editable_manual_pages',[]))
-        require(not excluded.intersection(p['slide_index'] for p in plan['pages']), 'Exclude unresolved editable-text pages from animation')
-        if edit.get('operation') == 'editable' and edit.get('output') == str(source):
+        edit_path = edit.get('output') or edit.get('original_input') or edit.get('input')
+        same_revision = (edit.get('operation') == 'editable' and edit_path
+                         and Path(edit_path).resolve() == source.resolve()
+                         and current_hash in {edit.get('input_sha256'), edit.get('output_sha256')})
+        if same_revision:
+            pending = edit.get('pending_text_issues', [])
+            excluded = {item['page'] for item in pending} | set(edit.get('editable_manual_pages',[]))
+            require(not excluded.intersection(p['slide_index'] for p in plan['pages']), 'Exclude unresolved editable-text pages from animation')
             require(edit.get('status') in {'completed','needs_manual_adjustment','verification_skipped'}, 'Review edited pages before animation')
+            if edit.get('status') == 'verification_skipped':
+                from ..editable import validate_deferred
+                validate_deferred(guard_run_dir(run_dir), edit)
         snapshot = make_snapshot(run_dir, source, current_hash)
         task.update(output=str(output), snapshot=str(snapshot))
         def prepare(result):

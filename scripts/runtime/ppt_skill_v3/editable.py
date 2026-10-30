@@ -28,6 +28,82 @@ def _previews(root, task):
     return manifest
 
 
+def previews(run_dir):
+    from .teaching_animation import export_animation_previews
+    root=Path(run_dir)
+    task=read_state(root)['stage5_animation']
+    if task.get('operation')!='editable' or task['status'] not in {'planning','plan_ready','verification_skipped'}:
+        raise ValidationError('Inspect current editable input before previewing')
+    if task['status']=='verification_skipped':
+        validate_deferred(root,task)
+        return {'status':'verification_skipped','verified':False,'reason':task['verification_skip_reason']}
+    manifest=export_animation_previews(root)
+    if manifest.get('method')!='verification_skipped':
+        return manifest
+    return _defer_unavailable(root)
+
+
+def _defer_unavailable(root):
+    """Keep the input byte-identical; never turn missing visual evidence into an edit."""
+    from .teaching_animation import _require_previews
+    from .text_mapping_review import require_task_mapping
+    from .animation_storage import make_snapshot
+    state=read_state(root);task=state['stage5_animation']
+    _require_previews(root,task)
+    manifest=read_json(root/'_state/阶段5/preview_manifest.json')
+    if manifest.get('method')!='verification_skipped' or not manifest.get('capability',{}).get('missing') or not manifest.get('reason'):
+        raise ValidationError('Confirmed missing rendering dependencies are required')
+    source=Path(task['input'])
+    if file_sha256(source)!=task['input_sha256']:
+        raise ValidationError('Editable input changed; inspect again')
+    info=read_json(root/task['inspection'])
+    try:
+        verification=require_task_mapping(root,task,[])
+        pending=[{'page':p['slide_index'],'status':'unresolved','reason':'Approved text differs; no visual evidence for repair'}
+                 for p in (verification or {}).get('pages',[]) if not p['editable_text_matches_stage1']]
+    except ValidationError as exc:
+        # If comparison cannot locate the difference, protect all pages instead of guessing.
+        pending=[{'page':p['page'],'status':'unresolved','reason':str(exc)} for p in info['pages']]
+    snapshot=make_snapshot(root,source,task['input_sha256'])
+    task.update(status='verification_skipped',verification_skipped=True,verification_skip_reason=manifest['reason'],
+                verified=False,background_accepted=False,font_review_accepted=False,editable_review_accepted=False,
+                output=str(source.resolve()),output_sha256=task['input_sha256'],editable_result_snapshot=str(snapshot),
+                preview_manifest_sha256=file_sha256(root/'_state/阶段5/preview_manifest.json'),
+                pending_text_issues=pending,editable_manual_pages=[],changes_deferred=True)
+    if state['workflow']['mode']=='animation_only':
+        state.update(status='completed',required_actor='none',next_required_action='缺环境保留原稿；仅安全页可继续轻量动画，环境恢复后重新inspect')
+    write_state(root,state)
+    return {'status':'verification_skipped','verified':False,'output':task['output'],
+            'reason':manifest['reason'],'changes_applied':False,'pending_text_issues':pending,'next':'animation inspect (safe pages only)'}
+
+
+def validate_deferred(root,task,*,require_missing=True):
+    from .verification_environment import verification_capability
+    root=Path(root);result_deferred=task.get('result_review_deferred') is True
+    manifest_path=root/('_state/阶段5/editable_output_manifest.json' if result_deferred else '_state/阶段5/preview_manifest.json')
+    manifest=read_json(manifest_path)
+    expected=task['output_sha256'] if result_deferred else task['input_sha256']
+    evidence_key='editable_output_manifest_sha256' if result_deferred else 'preview_manifest_sha256'
+    if ((not result_deferred and not task.get('changes_deferred')) or task.get('verified') is not False
+            or task.get('font_review_accepted') is not False or task.get('background_accepted') is not False
+            or task.get('editable_review_accepted') is not False
+            or (not result_deferred and task.get('output_sha256')!=task['input_sha256'])
+            or file_sha256(task['editable_result_snapshot'])!=expected
+            or file_sha256(manifest_path)!=task.get(evidence_key)
+            or manifest.get('method')!='verification_skipped' or manifest.get('verified') is not False
+            or manifest.get('input_sha256')!=expected or not manifest.get('capability',{}).get('missing')):
+        raise ValidationError('Editable deferral evidence changed; inspect again')
+    if result_deferred:
+        if file_sha256(root/task['plan'])!=task['plan_sha256'] or file_sha256(task['input'])!=task['input_sha256']:
+            raise ValidationError('Deferred editable plan/original changed')
+        if not _changed_pages(read_json(root/task['plan'])).issubset(set(task.get('editable_manual_pages',[]))):
+            raise ValidationError('Unreviewed editable changes must remain excluded from animation')
+    if task.get('approved_text_authority') and file_sha256(root/task['approved_text_authority'])!=task.get('approved_text_authority_sha256'):
+        raise ValidationError('Approved copy changed; inspect again')
+    if require_missing and verification_capability('pptx')['available']:
+        raise ValidationError('Rendering environment restored; inspect again before editable optimization')
+
+
 def record_plan(run_dir, plan):
     from .teaching_animation import (_bind_font_evidence, _require_reference_authorization,
                                     _validate_pending_text, slide_parts)
@@ -80,8 +156,10 @@ def record_plan(run_dir, plan):
 def apply(run_dir):
     from .resources import resource_slot, path_identity
     task=read_state(run_dir)['stage5_animation']
-    with resource_slot('editable-file:' + path_identity(task.get('output',task['input']))):
-        return _apply(run_dir)
+    target=task.get('output',task['input'])
+    with resource_slot('editable-directory:' + path_identity(Path(target).parent)):
+        with resource_slot('editable-file:' + path_identity(target)):
+            return _apply(run_dir)
 
 
 def _apply(run_dir):
@@ -100,13 +178,16 @@ def _apply(run_dir):
         raise ValidationError('Editable plan changed')
     if task.get('editable_candidate'):
         source=Path(task['input']);output=Path(task['output']);candidate=Path(task['editable_candidate'])
+        if file_sha256(source)!=task['input_sha256']:
+            raise ValidationError('Editable original snapshot changed')
         if not output.is_file():
             raise ValidationError('Editable output disappeared')
         if file_sha256(output)!=task['output_sha256']:
             if file_sha256(output)!=task['input_sha256'] or not candidate.is_file() or file_sha256(candidate)!=task['output_sha256']:
                 raise ValidationError('Editable commit changed externally')
             os.replace(candidate,output)
-        return verify_animation_only(source,output,set(),plan.get('font_repairs',[]),plan.get('text_optimizations',[]),root=root)
+        report=verify_animation_only(source,output,set(),plan.get('font_repairs',[]),plan.get('text_optimizations',[]),root=root)
+        return _finalize(root,state,report)
     if task['status']!='plan_ready' or file_sha256(task['input'])!=task['input_sha256']:
         raise ValidationError('Inspect and record the current editable plan')
     source=Path(task['input']).resolve();_locked_conflict(root,source)
@@ -139,10 +220,19 @@ def _apply(run_dir):
                     status='executing',editable_review_accepted=False)
         write_state(root,state)
         os.replace(candidate,source)
-    task.update(status='waiting_background_review',file_verification='_state/阶段5/editable_verification.json')
-    task['editable_result_snapshot']=str(make_snapshot(root,source,task['output_sha256']))
+    return _finalize(root,state,report)
+
+
+def _finalize(root,state,report):
+    from .animation_storage import make_snapshot
+    task=state['stage5_animation'];output=Path(task['output'])
+    task['editable_result_snapshot']=str(make_snapshot(root,output,task['output_sha256']))
+    task['file_verification']='_state/阶段5/editable_verification.json'
+    if task['status']=='executing':
+        task['status']='waiting_background_review'
     write_json(root/task['file_verification'],report);write_state(root,state)
-    return dict(report,output=str(source),next='editable previews-output; editable review')
+    next_action='animation inspect' if task['status'] in {'completed','needs_manual_adjustment'} else 'editable previews-output; editable review'
+    return dict(report,output=str(output),next=next_action)
 
 
 def output_previews(run_dir):
@@ -150,10 +240,37 @@ def output_previews(run_dir):
     root=Path(run_dir);state=read_state(root);task=state['stage5_animation']
     if task.get('operation')!='editable' or file_sha256(task['output'])!=task['output_sha256']:
         raise ValidationError('Current editable result is required')
+    if task['status']=='verification_skipped':
+        validate_deferred(root,task)
+        if not task.get('result_review_deferred'):
+            raise ValidationError('Editable changes were deferred; inspect again before result review')
+        return read_json(root/'_state/阶段5/editable_output_manifest.json')
     result=render_hidden(task['output'],root.resolve()/'_state/阶段5/editable_output_previews'/task['output_sha256'].split(':')[1][:12])
     result['plan_sha256']=task['plan_sha256']
     write_json(root/'_state/阶段5/editable_output_manifest.json',result)
+    if result.get('method')=='verification_skipped':
+        from .verification_environment import verification_capability
+        if (verification_capability('pptx')['available'] or result.get('verified') is not False
+                or not result.get('capability',{}).get('missing') or not result.get('reason')
+                or result.get('input_sha256')!=task['output_sha256']):
+            raise ValidationError('Result review can skip only confirmed missing rendering dependencies')
+        plan=read_json(root/task['plan'])
+        if file_sha256(root/task['plan'])!=task['plan_sha256']:
+            raise ValidationError('Editable plan changed')
+        task.update(status='verification_skipped',verification_skipped=True,verification_skip_reason=result['reason'],
+                    verified=False,background_accepted=False,font_review_accepted=False,editable_review_accepted=False,
+                    result_review_deferred=True,changes_deferred=False,
+                    editable_manual_pages=sorted(set(task.get('editable_manual_pages',[]))|_changed_pages(plan)),
+                    editable_output_manifest_sha256=file_sha256(root/'_state/阶段5/editable_output_manifest.json'))
+        write_state(root,state)
+        return dict(result,changes_applied=True,excluded_pages=task['editable_manual_pages'],
+                    next='animation inspect (unchanged safe pages only); editable inspect after environment restored')
     return result
+
+
+def _changed_pages(plan):
+    from .font_repair import _expanded_repairs
+    return {e['page'] for e in plan.get('text_optimizations',[])+_expanded_repairs(plan.get('font_repairs',[]))}
 
 
 def review(run_dir, document, *, persist=True, _task=None):

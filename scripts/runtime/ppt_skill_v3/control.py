@@ -53,6 +53,8 @@ def build_next_action(run_dir: str | Path, *, persist: bool = False) -> dict[str
         editable_operation = animation.get('operation') == 'editable'
         if editable_operation:
             commands={'planning':['editable previews','editable plan'],'plan_ready':['editable apply'],
+                      'executing':['editable apply'],
+                      'verification_skipped':['animation inspect','editable inspect (after environment restored)'],
                       'waiting_background_review':['editable previews-output','editable review'],
                       'needs_manual_adjustment':['editable inspect','editable plan'],'completed':['animation inspect'],
                       'failed':['editable inspect']}

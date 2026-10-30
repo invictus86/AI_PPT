@@ -155,6 +155,20 @@ def _check_animation(root: Path, issues: list[str], warnings: list[str]) -> None
             warnings.append('可编辑修订已写入，待实际结果页面审阅；不要求动画逐点击状态')
         elif task.get('status')=='needs_manual_adjustment':
             warnings.append('可编辑修订存在明确待办，其他安全页可以继续轻量动画')
+        elif task.get('status')=='executing':
+            warnings.append('可编辑写入待恢复；执行 editable apply 完成提交与结果检查登记')
+        elif task.get('status')=='verification_skipped':
+            try:
+                from .editable import validate_deferred
+                from .verification_environment import verification_capability
+                validate_deferred(root,task,require_missing=False)
+                if not view.get('output') or file_sha256(view['output'])!=task['output_sha256']:
+                    raise ValueError('deferred input changed')
+                warnings.append('缺环境保留现有PPTX，修订或结果审阅延后；未作视觉验收，待办及未复核修改页排除动画')
+                if verification_capability('pptx')['available']:
+                    warnings.append('后台环境已恢复；重新 editable inspect 后补做优化与实际审阅')
+            except Exception as exc:
+                issues.append(f'可编辑缺环境记录失效：{exc}')
         return
     for key, sha_key in (("input", "input_sha256"), ("output", "output_sha256")):
         if task.get(key):
