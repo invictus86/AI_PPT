@@ -50,9 +50,15 @@ def build_next_action(run_dir: str | Path, *, persist: bool = False) -> dict[str
                     "waiting_font_review": ["record-animation-font-review"],
                     "completed": [], "verification_skipped": ["export-animation-previews", "record-animation-plan", "apply-teaching-animation", "export-animation-states"]}
         animation = state["stage5_animation"]
+        editable_operation = animation.get('operation') == 'editable'
+        if editable_operation:
+            commands={'planning':['editable previews','editable plan'],'plan_ready':['editable apply'],
+                      'waiting_background_review':['editable previews-output','editable review'],
+                      'needs_manual_adjustment':['editable inspect','editable plan'],'completed':['animation inspect'],
+                      'failed':['editable inspect']}
         action.update({"action_kind": "animation_task", "auxiliary_stage": "stage5",
                        "animation_status": animation_status, "base_delivery_status": state.get("stage4_deliverables", {}).get("status"),
-                       "summary": f"教学动画专项：{animation_status}；基础交付完成事实独立保留",
+                       "summary": f"{'可编辑文字字体排版修订' if editable_operation else '教学动画专项'}：{animation_status}；基础交付完成事实独立保留",
                        "candidate_decision_types": [], "suggested_command_groups": commands.get(animation_status, []),
                        "confirmation_required": False})
     if persist:

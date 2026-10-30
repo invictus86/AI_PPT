@@ -131,6 +131,31 @@ def _check_animation(root: Path, issues: list[str], warnings: list[str]) -> None
     if task.get("status") == "not_started":
         return
     from .file_hashing import file_sha256
+    if task.get('operation') == 'editable':
+        view=dict(task)
+        output=Path(task.get('output',''))
+        if task.get('output') and (not output.is_file() or file_sha256(output)!=task.get('output_sha256')):
+            # A completed edit may have been passed to the separate animation route.
+            for record in (root/'_state/工具任务/animation').glob('*/task.json'):
+                item=read_json(record)
+                animated=Path(item.get('output',''))
+                if (item.get('source')==task['output'] and item.get('before_sha256')==task.get('output_sha256')
+                        and item.get('status')=='applied' and animated.is_file() and file_sha256(animated)==item.get('after_sha256')):
+                    view['output']=task.get('editable_result_snapshot',task['output'])
+                    break
+        if task.get('status')=='completed':
+            try:
+                from .editable import review
+                if file_sha256(root/task['editable_review'])!=task.get('editable_review_sha256'):
+                    raise ValueError('editable review changed')
+                review(root,read_json(root/task['editable_review']),persist=False,_task=view)
+            except Exception as exc:
+                issues.append(f'可编辑文字字体排版结果审阅失效：{exc}')
+        elif task.get('status')=='waiting_background_review':
+            warnings.append('可编辑修订已写入，待实际结果页面审阅；不要求动画逐点击状态')
+        elif task.get('status')=='needs_manual_adjustment':
+            warnings.append('可编辑修订存在明确待办，其他安全页可以继续轻量动画')
+        return
     for key, sha_key in (("input", "input_sha256"), ("output", "output_sha256")):
         if task.get(key):
             path = Path(task[key])

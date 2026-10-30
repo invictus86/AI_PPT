@@ -319,7 +319,9 @@ def validate_project_state(data: Any) -> dict[str, Any]:
     animation = state["stage5_animation"]
     if animation.get('status') == 'verification_skipped' and (animation.get('verification_skipped') is not True or animation.get('background_accepted') is not False or not animation.get('verification_skip_reason')):
         raise ValidationError('缺环境必须明确记录未验证，不能写成后台验收通过')
-    if animation.get("status") == "completed" and (animation.get("background_accepted") is not True or animation.get("execution_mode") != "background_only"):
+    if animation.get('status') == 'completed' and animation.get('operation') == 'editable' and animation.get('editable_review_accepted') is not True:
+        raise ValidationError('editable completion requires actual result page review')
+    if animation.get("status") == "completed" and animation.get('operation') != 'editable' and (animation.get("background_accepted") is not True or animation.get("execution_mode") != "background_only"):
         raise ValidationError("animation completion requires background click-state acceptance")
     if animation.get("status") == "completed" and animation.get("font_repair_enabled") and animation.get("font_review_accepted") is not True:
         raise ValidationError("font repair completion requires actual all-page font display review")

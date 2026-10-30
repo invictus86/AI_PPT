@@ -62,6 +62,29 @@ def build_parser() -> argparse.ArgumentParser:
         description="PPT Skill v3 passive runtime CLI.",
     )
     subparsers = parser.add_subparsers(dest="command")
+    from .animation.cli import add_parser as add_animation_parser
+    add_animation_parser(subparsers)
+    editable_parser = subparsers.add_parser('editable', help='保留文字字体排版优化；不写动画，完成后接animation。')
+    editable_commands = editable_parser.add_subparsers(dest='editable_command', required=True)
+    for operation in ('inspect','previews','plan','apply','previews-output','review'):
+        command = editable_commands.add_parser(operation)
+        command.add_argument('--run-dir',required=True)
+        if operation == 'inspect':
+            command.add_argument('--input-pptx',required=True)
+            command.add_argument('--evidence',required=True)
+            command.add_argument('--optimize-text',action='store_true')
+            command.add_argument('--repair-fonts',action='store_true')
+            command.add_argument('--match-reference-fonts',action='store_true')
+        elif operation in ('plan','review'):
+            command.add_argument('--file',required=True)
+    download_parser = subparsers.add_parser('download-canva-pptx',help='下载连接器已导出的PPTX；临时URL只从stdin读取。')
+    for name in ('run-dir','task-id','design-id'):
+        download_parser.add_argument('--'+name,required=True)
+    download_parser.add_argument('--expected-pages',type=int,required=True)
+    prepare_parser = subparsers.add_parser('prepare-editable-input',help='将下载原稿放入已有交付目录，不覆盖当前稿。')
+    prepare_parser.add_argument('--run-dir',required=True)
+    prepare_parser.add_argument('--source',required=True)
+    prepare_parser.add_argument('--target',required=True)
 
     init_parser = subparsers.add_parser("init", help="Create a v3 project skeleton.")
     init_parser.add_argument("--project-name", required=True)
@@ -459,6 +482,32 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _execute(args, parser):
+    if args.command == 'animation':
+        from .animation.cli import dispatch
+        return dispatch(args)
+    if args.command == 'download-canva-pptx':
+        from .canva_download import download_pptx
+        print(json.dumps(download_pptx(args.run_dir,args.task_id,args.design_id,args.expected_pages,sys.stdin.read()),ensure_ascii=False))
+        return 0
+    if args.command == 'prepare-editable-input':
+        from .canva_download import prepare_input
+        print(json.dumps(prepare_input(args.run_dir,args.source,args.target),ensure_ascii=False))
+        return 0
+    if args.command == 'editable':
+        from . import editable
+        op=args.editable_command
+        if op=='inspect':
+            result=editable.inspect(args.run_dir,args.input_pptx,args.evidence,optimize_text=args.optimize_text,
+                                    repair_fonts=args.repair_fonts,match_reference_fonts=args.match_reference_fonts)
+        elif op=='previews':
+            from .teaching_animation import export_animation_previews
+            result=export_animation_previews(args.run_dir)
+        elif op=='plan': result=editable.record_plan(args.run_dir,read_json(args.file))
+        elif op=='apply': result=editable.apply(args.run_dir)
+        elif op=='previews-output': result=editable.output_previews(args.run_dir)
+        else: result=editable.review(args.run_dir,read_json(args.file))
+        print(json.dumps(result,ensure_ascii=False))
+        return 0
     if args.command == "configure-image-generation":
         print(json.dumps(configure_image_generation(args.mode, run_dir=args.run_dir, inherit=args.inherit), ensure_ascii=False))
         return 0

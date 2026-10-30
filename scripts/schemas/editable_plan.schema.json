@@ -1,0 +1,417 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "input_sha256",
+    "controller_reviewed",
+    "preview_review_evidence",
+    "font_review_evidence",
+    "pages"
+  ],
+  "properties": {
+    "input_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "controller_reviewed": {
+      "const": true
+    },
+    "preview_review_evidence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "font_repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "page",
+          "shape_id",
+          "unit_kind",
+          "start",
+          "end",
+          "text",
+          "whole_unit_confirmed",
+          "bold",
+          "reason",
+          "bold_reason",
+          "boundary_reason",
+          "single_font_intent_evidence",
+          "visual_evidence"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shape_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "unit_kind": {
+            "enum": [
+              "sentence",
+              "title"
+            ]
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "whole_unit_confirmed": {
+            "const": true
+          },
+          "bold": {
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "compatibility",
+              "reference_match"
+            ]
+          },
+          "target_font": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidate_fonts": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "non_premium": {
+            "const": true
+          },
+          "font_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "font_face_index": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "mode"
+              ]
+            },
+            "then": {
+              "required": [
+                "target_font",
+                "candidate_fonts",
+                "non_premium",
+                "font_file",
+                "font_match_reason",
+                "sample_review_evidence"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "reference_match"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "reference_visual"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "font_handoff_resolutions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "handoff_id",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "handoff_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "replace",
+              "no_change",
+              "blocked"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shape_id": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "replace",
+                    "no_change"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "page",
+                "shape_id",
+                "mapping_reason",
+                "visual_evidence"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "text_optimizations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "page",
+          "shape_id",
+          "before_text",
+          "controller_reviewed",
+          "mild_adjustment_confirmed",
+          "reason",
+          "visual_evidence"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "shape_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "before_text": {
+            "type": "string"
+          },
+          "after_text": {
+            "type": "string"
+          },
+          "controller_reviewed": {
+            "const": true
+          },
+          "mild_adjustment_confirmed": {
+            "const": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "visual_evidence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text_change": {
+            "enum": [
+              "layout",
+              "reference_restoration"
+            ]
+          },
+          "reference_restoration_confirmed": {
+            "const": true
+          },
+          "run_format": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "font_family": {
+                "type": "string",
+                "minLength": 1
+              },
+              "font_size": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "bold": {
+                "type": "boolean"
+              },
+              "italic": {
+                "type": "boolean"
+              },
+              "underline": {
+                "type": "boolean"
+              },
+              "character_spacing": {
+                "type": "number"
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{6}$"
+              }
+            }
+          },
+          "paragraph_format": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "alignment": {
+                "enum": [
+                  "left",
+                  "center",
+                  "right",
+                  "justify"
+                ]
+              },
+              "line_spacing_percent": {
+                "type": "number"
+              },
+              "line_spacing_points": {
+                "type": "number"
+              },
+              "space_before": {
+                "type": "number"
+              },
+              "space_after": {
+                "type": "number"
+              },
+              "indent": {
+                "type": "number"
+              },
+              "margin_left": {
+                "type": "number"
+              }
+            }
+          },
+          "text_box": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "vertical_anchor": {
+                "enum": [
+                  "top",
+                  "middle",
+                  "bottom"
+                ]
+              },
+              "left": {
+                "type": "number"
+              },
+              "top": {
+                "type": "number"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              },
+              "margin_left": {
+                "type": "number"
+              },
+              "margin_right": {
+                "type": "number"
+              },
+              "margin_top": {
+                "type": "number"
+              },
+              "margin_bottom": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "pending_text_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "page",
+          "status",
+          "reason",
+          "visual_evidence"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "const": "unresolved"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "visual_evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "page",
+          "font_observation"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "font_observation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "manual_issues": {
+            "type": "array"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "font_review_evidence": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": true,
+  "title": "Editable text/font/layout plan; timing is handled by animation_plan.schema.json"
+}

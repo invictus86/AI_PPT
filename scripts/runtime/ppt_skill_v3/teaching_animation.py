@@ -354,8 +354,9 @@ def _require_previews(root: Path, task: dict[str, Any]) -> None:
         return
     if manifest.get('environment_fingerprint'):
         from .render_cache import environment_fingerprint
+        from .embedded_fonts import decoder_files
         renderer_module = Path(__file__).with_name('background_ppt.py')
-        if manifest['environment_fingerprint'] != environment_fingerprint([renderer_module,renderer_module.with_name('background_render.ps1')]):
+        if manifest['environment_fingerprint'] != environment_fingerprint([renderer_module,renderer_module.with_name('background_render.ps1'),*decoder_files()]):
             raise ValidationError('字体或Office渲染环境已变化，须重新预览和制定计划')
     info = read_json(root / "_state/阶段5/inspection.json")
     images = manifest.get("images", [])
