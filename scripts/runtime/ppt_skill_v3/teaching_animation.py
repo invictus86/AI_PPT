@@ -76,7 +76,7 @@ def inspect_pptx(path: str | Path) -> dict[str, Any]:
 
 
 def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, *, repair_fonts: bool = False,
-                    match_reference_fonts: bool = False, optimize_text: bool = False) -> dict[str, Any]:
+                    match_reference_fonts: bool = False, optimize_text: bool = False, operation: str = 'legacy_animation') -> dict[str, Any]:
     root = Path(run_dir)
     state = read_state(root)
     text_verification = None
@@ -108,7 +108,9 @@ def start_animation(run_dir: str | Path, input_pptx: str | Path, evidence: str, 
     write_json(target / "inspection.json", info)
     if text_verification is not None:
         write_json(target / 'initial_text_verification.json', text_verification)
-    state["stage5_animation"] = {"status": "planning", "input": info["source_path"],
+    if operation not in {'editable','legacy_animation'}:
+        raise ValidationError('Unknown editable/legacy operation')
+    state["stage5_animation"] = {"operation":operation,"status": "planning", "input": info["source_path"],
         "input_sha256": info["source_sha256"], "authorization_evidence": evidence,
         "font_repair_enabled": repair_fonts, "font_review_accepted": not repair_fonts,
         "text_optimization_enabled": optimize_text,

@@ -132,17 +132,12 @@ def _check_animation(root: Path, issues: list[str], warnings: list[str]) -> None
         return
     from .file_hashing import file_sha256
     if task.get('operation') == 'editable':
-        view=dict(task)
-        output=Path(task.get('output',''))
-        if task.get('output') and (not output.is_file() or file_sha256(output)!=task.get('output_sha256')):
-            # A completed edit may have been passed to the separate animation route.
-            for record in (root/'_state/工具任务/animation').glob('*/task.json'):
-                item=read_json(record)
-                animated=Path(item.get('output',''))
-                if (item.get('source')==task['output'] and item.get('before_sha256')==task.get('output_sha256')
-                        and item.get('status')=='applied' and animated.is_file() and file_sha256(animated)==item.get('after_sha256')):
-                    view['output']=task.get('editable_result_snapshot',task['output'])
-                    break
+        try:
+            from .animation.lineage import result_view
+            view=result_view(root,task)
+        except Exception as exc:
+            issues.append(f'可编辑文件缺失或指纹失效：{exc}')
+            return
         if task.get('status')=='completed':
             try:
                 from .editable import review

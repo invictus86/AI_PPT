@@ -69,18 +69,16 @@ def check_index(root=SKILL):
 
 
 def normalize_install_status(root=SKILL):
-    """Keep substantive edits; remove machine-generated installation stamp drift."""
+    """Publish a stable pointer to local status, never restore another machine's stamp."""
+    from ppt_skill_v3.installation import INSTALL_STATUS_NOTICE
     path = Path(root) / 'docs' / '维护说明.md'
-    before = git('show', 'HEAD:docs/维护说明.md', root=root, check=False)
-    if before.returncode or not path.exists():
+    if not path.exists():
         return
     pattern = r'<!-- PPT_SKILL_INSTALL_STATUS_BEGIN -->.*?<!-- PPT_SKILL_INSTALL_STATUS_END -->'
-    original = re.search(pattern, before.stdout, re.S)
-    if original:
-        text = path.read_text(encoding='utf-8')
-        new = re.sub(pattern, lambda _: original.group(), text, count=1, flags=re.S)
-        if new != text:
-            path.write_text(new, encoding='utf-8', newline='\n')
+    text = path.read_text(encoding='utf-8')
+    new = re.sub(pattern, lambda _: INSTALL_STATUS_NOTICE, text, count=1, flags=re.S)
+    if new != text:
+        path.write_text(new, encoding='utf-8', newline='\n')
 
 
 def assert_quiet():

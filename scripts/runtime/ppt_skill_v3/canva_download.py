@@ -34,6 +34,22 @@ class _Redirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req,fp,code,msg,headers,_url(newurl))
 
 
+def _validate_export(path,expected_pages=None):
+    from .animation.reader import read_package,inventory_from_parts
+    from pptx import Presentation
+    try:
+        parts=read_package(path)
+        inventory=inventory_from_parts(parts,{'path':str(path),'sha256':'sha256:'+hashlib.sha256(Path(path).read_bytes()).hexdigest()})
+        count=len(inventory['pages'])
+        if len(Presentation(path).slides)!=count:
+            raise ValidationError('PPTX slide relationships disagree')
+        if expected_pages is not None and count!=expected_pages:
+            raise ValidationError('Export page count differs from the selected Canva design')
+        return count
+    except (zipfile.BadZipFile,KeyError,ET.ParseError,ValueError) as exc:
+        raise ValidationError('Incomplete or invalid PowerPoint export') from exc
+
+
 def download_pptx(run_dir, task_id, design_id, expected_pages, url):
     from .animation.task import guard_run_dir
     root = guard_run_dir(run_dir)
@@ -74,6 +90,7 @@ def download_pptx(run_dir, task_id, design_id, expected_pages, url):
             count=len(presentation.findall('p:sldIdLst/p:sldId',ns))
             if count!=expected_pages:
                 raise ValidationError('Export page count differs from the selected Canva design')
+        count=_validate_export(temporary,expected_pages)
         digest=hashlib.sha256(temporary.read_bytes()).hexdigest()
         target=folder/(digest+'.pptx')
         if target.exists():
@@ -85,6 +102,7 @@ def download_pptx(run_dir, task_id, design_id, expected_pages, url):
                   'file':target.relative_to(root).as_posix(),'editable_objects_verified':False,
                   'status':'downloaded','bytes':target.stat().st_size}
         write_json(folder/'download_manifest.json',manifest)
+        write_json(folder/(digest+'.manifest.json'),manifest)
         return manifest
     except (zipfile.BadZipFile, KeyError, ET.ParseError):
         raise ValidationError('Export is not a valid PowerPoint presentation') from None
@@ -124,12 +142,25 @@ def _prepare_input(run_dir, downloaded_file, target):
         raise ValidationError('Use the current project download and delivery directory')
     if target.is_relative_to(root/'_state') or target.suffix.lower()!='.pptx':
         raise ValidationError('Working input must be a PPTX in the project delivery directory')
-    manifest=read_json(source.parent/'download_manifest.json')
     digest='sha256:'+hashlib.sha256(source.read_bytes()).hexdigest()
+    version_manifest=source.parent/(digest.split(':')[1]+'.manifest.json')
+    manifest=read_json(version_manifest if version_manifest.is_file() else source.parent/'download_manifest.json')
     if manifest.get('sha256')!=digest or manifest.get('file')!=source.relative_to(root).as_posix():
         raise ValidationError('Downloaded source differs from its verified manifest')
+    _validate_export(source,manifest.get('pages'))
     canonical=animation_output_path(target)
-    journal=source.parent/('prepare_'+hashlib.sha256(str(target).encode('utf-8')).hexdigest()[:16]+'.json')
+    target_id=hashlib.sha256(str(target).encode('utf-8')).hexdigest()[:16]
+    journal=source.parent/('prepare_'+target_id+'_'+digest.split(':')[1]+'.json')
+    old_journal=source.parent/('prepare_'+target_id+'.json')
+    # Recover genuine unfinished older transactions, never confuse them with a new export.
+    for previous_record in source.parent.glob('prepare_'+target_id+'*.json'):
+        data=read_json(previous_record)
+        if data.get('phase')!='committed':
+            if data.get('source_sha256')!=digest:
+                raise ValidationError('Another export preparation is unfinished; recover its recorded source first')
+            journal=previous_record;break
+        if previous_record==old_journal and data.get('source_sha256')==digest:
+            journal=previous_record
     if journal.exists():
         record=read_json(journal)
         if record.get('phase')=='committed':
@@ -154,8 +185,10 @@ def _prepare_input(run_dir, downloaded_file, target):
         if 'sha256:'+hashlib.sha256(temporary.read_bytes()).hexdigest()!=digest:
             raise ValidationError('Working input copy is incomplete')
         snapshot=str(make_snapshot(root,canonical,previous)) if previous else None
+        stat=canonical.stat() if previous else None
         record={'phase':'prepared','source_sha256':digest,'target':str(target),'canonical':str(canonical),
-                'candidate':str(temporary),'previous_sha256':previous,'previous_snapshot':snapshot}
+                'candidate':str(temporary),'previous_sha256':previous,'previous_snapshot':snapshot,
+                'previous_identity':[stat.st_dev,stat.st_ino] if stat else None}
         write_json(journal,record)
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -165,16 +198,25 @@ def _prepare_input(run_dir, downloaded_file, target):
 
 def _finish_prepare(journal,record,temporary,target,canonical):
     from .file_hashing import file_sha256
+    if file_sha256(temporary)!=record['source_sha256']:
+        raise ValidationError('Working input candidate changed')
     if os.path.lexists(target) and not os.path.samefile(temporary,target):
         raise ValidationError('Working input conflicts; unrelated file and previous deliverable preserved')
     previous=record.get('previous_sha256')
+    if canonical!=target and os.path.lexists(canonical) and (not previous or record.get('phase')=='archived'):
+        raise ValidationError('Canonical animation name became occupied; unrelated file preserved')
     if previous:
         if file_sha256(record['previous_snapshot'])!=previous:
             raise ValidationError('Previous deliverable snapshot changed')
         if os.path.lexists(canonical):
             if canonical.is_symlink() or file_sha256(canonical)!=previous:
                 raise ValidationError('Previous deliverable changed during preparation')
+            stat=canonical.stat()
+            if record.get('previous_identity') and [stat.st_dev,stat.st_ino]!=record['previous_identity']:
+                raise ValidationError('Previous deliverable file identity changed')
             canonical.unlink()
+        if record.get('phase')!='archived':
+            record['phase']='archived';write_json(journal,record)
     if os.path.lexists(target):
         if not os.path.samefile(temporary,target):
             raise ValidationError('Working input conflicts; unrelated file preserved')

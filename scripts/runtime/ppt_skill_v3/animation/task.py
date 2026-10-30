@@ -50,6 +50,21 @@ def _state(root):
 
 def _project_source(root):
     state = _state(root)
+    edit=state.get('stage5_animation',{})
+    if edit.get('operation')=='editable' and edit.get('output'):
+        current=Path(edit['output'])
+        if current.is_file() and digest(current.read_bytes())==edit.get('output_sha256'):
+            return str(current)
+    current_outputs=set()
+    for record in (root/TASKS_REL).glob('*/task.json'):
+        try:
+            item=read_json(record);current=Path(item.get('output',''))
+            if item.get('status')=='applied' and current.is_file() and digest(current.read_bytes())==item.get('after_sha256'):
+                current_outputs.add(str(current.resolve()))
+        except (ValueError,OSError,KeyError):
+            continue
+    if len(current_outputs)==1:return next(iter(current_outputs))
+    if len(current_outputs)>1:return None
     locked = state.get("stage3_locked_presentation_source") or {}
     choices = [locked.get("source_path"), (state.get("user_artifacts") or {}).get("stage3_locked_presentation_source"),
                (state.get("user_artifacts") or {}).get("stage2_image_deck")]
@@ -69,6 +84,9 @@ def inspect_task(run_dir, task_id, *, source=None, active_ppt=None, project_ppt=
     directories = [root]
     if root.is_dir():
         directories += [d for d in root.iterdir() if d.is_dir() and d.name.startswith("阶段")]
+        delivery=root/'阶段4_文件整理交付'
+        if delivery.is_dir():
+            directories += [d for d in delivery.iterdir() if d.is_dir() and d.resolve().is_relative_to(root)]
     selection = resolve_source(explicit=source, active=active_ppt, project=project_ppt or _project_source(root), directories=directories)
     if selection["status"] != "resolved":
         return selection
@@ -168,10 +186,8 @@ def _apply_task(run_dir, task_id, plan_file):
         # A separate, unfinished editable revision must not be animated as accepted copy.
         state = _state(guard_run_dir(run_dir))
         edit = state.get('stage5_animation', {})
-        edit_path = edit.get('output') or edit.get('original_input') or edit.get('input')
-        same_revision = (edit.get('operation') == 'editable' and edit_path
-                         and Path(edit_path).resolve() == source.resolve()
-                         and current_hash in {edit.get('input_sha256'), edit.get('output_sha256')})
+        from .lineage import editable_matches
+        same_revision = editable_matches(guard_run_dir(run_dir),source,current_hash,edit)
         if same_revision:
             pending = edit.get('pending_text_issues', [])
             excluded = {item['page'] for item in pending} | set(edit.get('editable_manual_pages',[]))

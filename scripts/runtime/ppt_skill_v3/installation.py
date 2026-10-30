@@ -20,6 +20,8 @@ from .workspace_paths import (
 
 STATUS_BEGIN = "<!-- PPT_SKILL_INSTALL_STATUS_BEGIN -->"
 STATUS_END = "<!-- PPT_SKILL_INSTALL_STATUS_END -->"
+INSTALL_STATUS_NOTICE = (STATUS_BEGIN+'\n本机主体、根入口、安装版本及时间保存在 `_local/config/installation.json`，'
+                         '不随GitHub同步；使用 `inspect-installation` 查看当前实际安装。发布版本见下文。\n'+STATUS_END)
 EXCLUDE_BEGIN = "# BEGIN ppt-skill-v3 managed ignore"
 EXCLUDE_END = "# END ppt-skill-v3 managed ignore"
 
@@ -60,6 +62,7 @@ def install_profile(target: str, workspace_root: str | Path | None = None) -> di
         "output_root": str(dirs["output_root"]),
         "git_exclude": str(exclude_path) if exclude_path else None,
         "maintenance_doc": str(maintenance_path),
+        "installation_state": str(skill_root/'_local/config/installation.json'),
         "backups": [str(path) for path in backups],
     }
 
@@ -231,18 +234,12 @@ def _exclude_block_synced(exclude_path: Path) -> bool:
 
 
 def _update_maintenance_status(skill_root: Path, profile: str, entry_file: str) -> Path:
+    from .json_io import write_json
     path = skill_root / "docs" / "维护说明.md"
     text = path.read_text(encoding="utf-8")
-    block = "\n".join(
-        [
-            STATUS_BEGIN,
-            f"- 当前主体：`{profile}`",
-            f"- 当前根入口：`{entry_file}`",
-            f"- 当前版本：`{__version__}`",
-            f"- 最近安装检查：`{now_iso()}`",
-            STATUS_END,
-        ]
-    )
+    write_json(skill_root/'_local/config/installation.json',{'profile':profile,'entry_file':entry_file,
+               'version':__version__,'installed_at':now_iso()})
+    block = INSTALL_STATUS_NOTICE
     if STATUS_BEGIN in text and STATUS_END in text:
         before, remainder = text.split(STATUS_BEGIN, 1)
         _old, after = remainder.split(STATUS_END, 1)

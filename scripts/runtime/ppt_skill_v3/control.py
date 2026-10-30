@@ -128,7 +128,8 @@ def build_resume_brief(run_dir: str | Path, *, persist: bool = False, compact: b
     brief['removed_files'] = [name for name in previous if name not in brief['effective_file_fingerprints']]
     if compact:
         animation = brief['stage5_animation']
-        brief['stage5_animation'] = {key:animation[key] for key in ('status','input','output','input_sha256','output_sha256','plan','plan_sha256',
+        brief['stage5_animation'] = {key:animation[key] for key in ('operation','status','input','output','input_sha256','output_sha256','plan','plan_sha256',
+            'pending_text_issues','editable_manual_pages','editable_review_accepted','verification_skip_reason','changes_deferred','result_review_deferred',
             'previews','background_manifest','background_accepted','font_review_accepted','font_repair_enabled','error','manual_issues') if key in animation}
         brief['recent_events'] = [{key:item[key] for key in ('event_type','actor','created_at','summary','error','status','image_path','decision_id') if key in item} for item in brief['recent_events']]
         brief['detail_command'] = 'resume-brief --run-dir "'+str(root)+'" (不加--compact可读取原完整摘要)'

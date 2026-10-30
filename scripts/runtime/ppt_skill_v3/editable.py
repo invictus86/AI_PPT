@@ -9,13 +9,17 @@ from .state import read_state, write_state
 from .validation import ValidationError
 
 
+def _authorization_digest(task):
+    import hashlib,json
+    keys=('operation','input_sha256','authorization_evidence','font_repair_enabled','text_optimization_enabled',
+          'reference_font_matching_enabled','text_optimization_authorization_evidence','reference_font_authorization_evidence')
+    return 'sha256:'+hashlib.sha256(json.dumps({k:task.get(k) for k in keys},ensure_ascii=False,sort_keys=True).encode('utf-8')).hexdigest()
+
+
 def inspect(run_dir, source, evidence, *, optimize_text=False, repair_fonts=False, match_reference_fonts=False):
     from .teaching_animation import start_animation
     result=start_animation(run_dir,source,evidence,optimize_text=optimize_text,
-                           repair_fonts=repair_fonts,match_reference_fonts=match_reference_fonts)
-    state=read_state(run_dir)
-    state['stage5_animation']['operation']='editable'
-    write_state(run_dir,state)
+                           repair_fonts=repair_fonts,match_reference_fonts=match_reference_fonts,operation='editable')
     return result
 
 
@@ -64,12 +68,21 @@ def _defer_unavailable(root):
     except ValidationError as exc:
         # If comparison cannot locate the difference, protect all pages instead of guessing.
         pending=[{'page':p['page'],'status':'unresolved','reason':str(exc)} for p in info['pages']]
+    # Missing evidence cannot resolve or erase previously known problems.
+    pending_by_page={p['page']:p for p in pending}
+    pending_by_page.update({p['page']:p for p in task.get('pending_text_issues',[])})
+    pending=[pending_by_page[n] for n in sorted(pending_by_page)]
+    manual=set(task.get('editable_manual_pages',[]))
+    if task.get('plan'):
+        if file_sha256(root/task['plan'])!=task.get('plan_sha256'):
+            raise ValidationError('Editable plan changed before deferral')
+        manual.update(p['page'] for p in read_json(root/task['plan'])['pages'] if p.get('manual_issues'))
     snapshot=make_snapshot(root,source,task['input_sha256'])
     task.update(status='verification_skipped',verification_skipped=True,verification_skip_reason=manifest['reason'],
                 verified=False,background_accepted=False,font_review_accepted=False,editable_review_accepted=False,
                 output=str(source.resolve()),output_sha256=task['input_sha256'],editable_result_snapshot=str(snapshot),
                 preview_manifest_sha256=file_sha256(root/'_state/阶段5/preview_manifest.json'),
-                pending_text_issues=pending,editable_manual_pages=[],changes_deferred=True)
+                pending_text_issues=pending,editable_manual_pages=sorted(manual),changes_deferred=True)
     if state['workflow']['mode']=='animation_only':
         state.update(status='completed',required_actor='none',next_required_action='缺环境保留原稿；仅安全页可继续轻量动画，环境恢复后重新inspect')
     write_state(root,state)
@@ -148,7 +161,7 @@ def record_plan(run_dir, plan):
     path=root/'_state/阶段5/editable_plan.json';write_json(path,result)
     task.update(status='plan_ready',plan=path.relative_to(root).as_posix(),plan_sha256=file_sha256(path),
                 preview_manifest_sha256=file_sha256(root/'_state/阶段5/preview_manifest.json'),pending_text_issues=pending,
-                editable_manual_pages=sorted(manual_pages))
+                editable_manual_pages=sorted(manual_pages),editable_authorization_sha256=_authorization_digest(task))
     write_state(root,state)
     return result
 
@@ -162,12 +175,45 @@ def apply(run_dir):
             return _apply(run_dir)
 
 
-def _apply(run_dir):
-    from .teaching_animation import verify_animation_only, slide_parts, _bind_font_evidence
-    from .font_repair import apply_font_repairs
-    from .text_optimization import apply_text_optimizations, validate_optimizations
+def _validate_basis(root,task,plan):
+    """The same evidence checks precede initial commits, recovery, and acceptance."""
+    from .teaching_animation import (_bind_font_evidence,_require_reference_authorization,
+                                    _validate_pending_text,slide_parts)
+    from .text_optimization import validate_optimizations
+    from .font_repair import validate_repairs
     from .text_mapping_review import require_task_mapping
     from .font_handoff import validate_handoff_resolutions
+    if file_sha256(task['input'])!=task['input_sha256']:
+        raise ValidationError('Editable original snapshot changed')
+    if file_sha256(root/task['plan'])!=task['plan_sha256']:
+        raise ValidationError('Editable plan changed')
+    _previews(root,task)
+    if file_sha256(root/'_state/阶段5/preview_manifest.json')!=task['preview_manifest_sha256']:
+        raise ValidationError('Editable preview evidence changed')
+    repairs=plan.get('font_repairs',[]);opts=plan.get('text_optimizations',[])
+    if repairs and not task.get('font_repair_enabled') or opts and not task.get('text_optimization_enabled'):
+        raise ValidationError('Changes exceed current editable authorization')
+    if not task.get('authorization_evidence'):
+        raise ValidationError('Editable authorization missing')
+    if task.get('editable_authorization_sha256') and _authorization_digest(task)!=task['editable_authorization_sha256']:
+        raise ValidationError('Editable authorization changed; record the current plan again')
+    validate_optimizations(task['input'],opts,root=root)
+    validate_repairs(Path(task['input']),slide_parts(task['input']),repairs)
+    verification=require_task_mapping(root,task,opts)
+    _validate_pending_text(root,task,plan,verification,bind=False)
+    _require_reference_authorization(task,repairs)
+    _bind_font_evidence(root,repairs,bind=False)
+    _bind_font_evidence(root,plan.get('font_handoff_resolutions',[]),bind=False)
+    info=read_json(root/'_state/阶段5/inspection.json')
+    if info.get('source_sha256')!=task['input_sha256']:
+        raise ValidationError('Editable inspection changed')
+    validate_handoff_resolutions(root,task,plan,info)
+
+
+def _apply(run_dir):
+    from .teaching_animation import verify_animation_only, slide_parts
+    from .font_repair import apply_font_repairs
+    from .text_optimization import apply_text_optimizations
     from .animation.task import _locked_conflict
     from .animation_storage import make_snapshot
     root=Path(run_dir);state=read_state(root);task=state['stage5_animation']
@@ -178,28 +224,22 @@ def _apply(run_dir):
         raise ValidationError('Editable plan changed')
     if task.get('editable_candidate'):
         source=Path(task['input']);output=Path(task['output']);candidate=Path(task['editable_candidate'])
-        if file_sha256(source)!=task['input_sha256']:
-            raise ValidationError('Editable original snapshot changed')
+        _validate_basis(root,task,plan)
+        _locked_conflict(root,output.resolve())
         if not output.is_file():
             raise ValidationError('Editable output disappeared')
         if file_sha256(output)!=task['output_sha256']:
             if file_sha256(output)!=task['input_sha256'] or not candidate.is_file() or file_sha256(candidate)!=task['output_sha256']:
                 raise ValidationError('Editable commit changed externally')
+            verify_animation_only(source,candidate,set(),plan.get('font_repairs',[]),plan.get('text_optimizations',[]),root=root)
             os.replace(candidate,output)
         report=verify_animation_only(source,output,set(),plan.get('font_repairs',[]),plan.get('text_optimizations',[]),root=root)
         return _finalize(root,state,report)
     if task['status']!='plan_ready' or file_sha256(task['input'])!=task['input_sha256']:
         raise ValidationError('Inspect and record the current editable plan')
     source=Path(task['input']).resolve();_locked_conflict(root,source)
-    _previews(root,task)
-    if file_sha256(root/'_state/阶段5/preview_manifest.json')!=task['preview_manifest_sha256']:
-        raise ValidationError('Editable preview evidence changed')
+    _validate_basis(root,task,plan)
     repairs=plan.get('font_repairs',[]);opts=plan.get('text_optimizations',[])
-    validate_optimizations(source,opts,root=root)
-    require_task_mapping(root,task,opts)
-    validate_handoff_resolutions(root,task,plan,read_json(root/'_state/阶段5/inspection.json'))
-    _bind_font_evidence(root,repairs,bind=False)
-    _bind_font_evidence(root,plan.get('font_handoff_resolutions',[]),bind=False)
     snapshot=make_snapshot(root,source,task['input_sha256'])
     with tempfile.TemporaryDirectory(prefix='ppt_editable_') as tmp:
         baseline=source
@@ -213,6 +253,8 @@ def _apply(run_dir):
         with os.fdopen(fd,'wb') as out,baseline.open('rb') as incoming:
             shutil.copyfileobj(incoming,out);out.flush();os.fsync(out.fileno())
         candidate=Path(name)
+        _validate_basis(root,task,plan)
+        verify_animation_only(source,candidate,set(),repairs,opts,root=root)
         if file_sha256(source)!=task['input_sha256']:
             candidate.unlink();raise ValidationError('Editable source changed concurrently')
         task.update(input=str(snapshot),output=str(source),original_input=str(source),
@@ -302,6 +344,7 @@ def review(run_dir, document, *, persist=True, _task=None):
         if any(not isinstance(p.get(k),str) or not p[k].strip() for k in ('font_observation','layout_observation','text_quality_observation','original_comparison_observation')):
             raise ValidationError('Record actual text/font/layout and original comparison observations')
     plan=read_json(root/task['plan'])
+    _validate_basis(root,task,plan)
     verify_animation_only(Path(task['input']),Path(task['output']),set(),plan.get('font_repairs',[]),plan.get('text_optimizations',[]),root=root)
     if not persist:
         return {'valid':True,'editable_review_accepted':True}
