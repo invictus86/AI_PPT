@@ -8,7 +8,7 @@ from ..validation import ValidationError
 from . import PROFILE
 
 SCENES = {"general", "k12", "pitch", "healthcare", "competition", "defense"}
-ROLES = {"question", "given", "options", "answer", "answer_marker", "explanation", "content", "decoration", "safety"}
+ROLES = {"question", "given", "options", "reasoning", "answer", "answer_marker", "explanation", "content", "decoration", "safety"}
 
 
 def require(condition, message):
@@ -25,7 +25,8 @@ def validate_plan(plan, inventory=None):
     """Validate semantics without inferring answers or modifying the plan."""
     keys(plan, {"schema_version", "source", "scene", "profile", "existing_timing_policy", "pages", "question_refs"},
          {"schema_version", "source", "scene", "profile", "existing_timing_policy", "pages"})
-    require(plan["schema_version"] == "1.0" and plan["profile"] == PROFILE, "Unsupported animation plan/profile")
+    require(plan["schema_version"] in {"1.0", "1.1"} and plan["profile"] == PROFILE, "Unsupported animation plan/profile")
+    ordered = plan['schema_version'] == '1.1'
     require(isinstance(plan["scene"], str) and plan["scene"] in SCENES, "Unsupported scene")
     require(isinstance(plan["existing_timing_policy"], str) and plan["existing_timing_policy"] in {"reject", "replace_selected"}, "Unsupported timing policy")
     keys(plan["source"], {"path", "sha256"}, {"path", "sha256"})
@@ -37,7 +38,8 @@ def validate_plan(plan, inventory=None):
     require(isinstance(plan.get('question_refs', []), list), 'question_refs must be a list')
     seen_pages = set()
     for page in plan["pages"]:
-        keys(page, {"slide_index", "part", "units", "needs_layering", "visual_checked", "static_reason"}, {"slide_index", "part", "units"})
+        keys(page, {"slide_index", "part", "units", "needs_layering", "visual_checked", "static_reason", "reading_order", "reading_order_reason", "order_constraints"}, {"slide_index", "part", "units"})
+        require(ordered or not ({'reading_order', 'reading_order_reason', 'order_constraints'} & page.keys()), 'Ordering fields require schema 1.1')
         index = page["slide_index"]
         require(type(index) is int and index > 0 and index not in seen_pages, "Duplicate or invalid page")
         seen_pages.add(index)
@@ -50,7 +52,8 @@ def validate_plan(plan, inventory=None):
         require(isinstance(page["units"], list), "Expected units list")
         ids, targets, clicks, questions = set(), [], set(), {}
         for unit in page["units"]:
-            keys(unit, {"id", "role", "targets", "click", "question_id", "is_title", "title_id", "title_exception_reason"}, {"id", "role", "targets", "click"})
+            keys(unit, {"id", "role", "targets", "click", "question_id", "is_title", "title_id", "title_exception_reason", "binding_id", "order_anchor"}, {"id", "role", "targets", "click"})
+            require(ordered or not ({'binding_id', 'order_anchor'} & unit.keys()) and unit['role'] != 'reasoning', 'Ordering fields/roles require schema 1.1')
             require(isinstance(unit["id"], str) and unit["id"] and unit["id"] not in ids, "Duplicate/empty unit id")
             ids.add(unit["id"])
             require(isinstance(unit["role"], str) and unit["role"] in ROLES, "Unsupported role")
@@ -68,12 +71,12 @@ def validate_plan(plan, inventory=None):
                     'title_exception_reason requires a declared title and concrete reason')
             if qid is not None:
                 require(isinstance(qid, str) and bool(qid), "Invalid question_id")
-            if role in {"question", "given", "options", "answer", "answer_marker", "explanation"}:
+            if role in {"question", "given", "options", "reasoning", "answer", "answer_marker", "explanation"}:
                 require(qid is not None, "Question/answer units require question_id")
             if role == "question":
-                require(click == 0, "Questions must be initially visible")
+                require(ordered or click == 0, "Questions must be initially visible")
                 questions[qid] = click
-            if role in {"given", "options", "safety", "decoration"}:
+            if role in ({"safety", "decoration"} if ordered else {"given", "options", "safety", "decoration"}):
                 require(click == 0, f"{role} must remain initially visible")
             if role == "answer":
                 require(click > 0, "Answer requires a new manual click")
@@ -85,7 +88,7 @@ def validate_plan(plan, inventory=None):
             require(len(rows) == 1 and rows[0]["part"] == page["part"], "Slide order/part mismatch")
             row = rows[0]
             require(set(targets) == {o["id"] for o in row["objects"]}, "Missing or foreign targets; classify every top-level object")
-            if (questions or any(u['role'] in {'answer', 'answer_marker', 'explanation'} for u in page['units'])) and row["has_visual_content"]:
+            if (questions or any(u['role'] in {'reasoning', 'answer', 'answer_marker', 'explanation'} for u in page['units'])) and row["has_visual_content"]:
                 require(page.get("visual_checked") is True, "Question page contains images/graphics: inspect existing preview for baked-in answers")
             require(not row["auto_advance"], "Automatic slide advance conflicts with manual reveal; adjust separately")
             require(not row["has_timing"] or plan["existing_timing_policy"] == "replace_selected", "Existing timing: explicitly select replace_selected within authorized pages")

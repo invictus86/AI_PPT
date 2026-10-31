@@ -3,7 +3,10 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.0"
+      "enum": [
+        "1.0",
+        "1.1"
+      ]
     },
     "profile": {
       "const": "linear_fade_b_v1"
@@ -72,6 +75,7 @@
                     "question",
                     "given",
                     "options",
+                    "reasoning",
                     "answer",
                     "answer_marker",
                     "explanation",
@@ -110,6 +114,16 @@
                   "type": "string",
                   "minLength": 1,
                   "description": "Concrete teaching basis for revealing this title after related content."
+                },
+                "binding_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Schema 1.1: page-local complete-block binding. All members must have the same click."
+                },
+                "order_anchor": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Schema 1.1: owned top-level content target used as the block reading anchor, excluding oversized local decoration."
                 }
               },
               "required": [
@@ -131,6 +145,45 @@
             "type": "string",
             "minLength": 1,
             "description": "Concrete current-page basis for a static exception. Required by runtime when all units use click=0; reading/writing/no-split alone is insufficient."
+          },
+          "reading_order": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Schema 1.1: optional reviewed layout baseline, every dynamic unit exactly once. Teaching dependencies still take precedence."
+          },
+          "reading_order_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "order_constraints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "before",
+                "after",
+                "reason"
+              ],
+              "properties": {
+                "before": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "after": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
           }
         },
         "required": [
@@ -192,5 +245,5 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ppt-skill-v3.local/schemas/animation_plan.schema.json",
   "title": "ppt-skill-v3 animation plan",
-  "description": "Runtime validates full object coverage, source binding, declared title/body order and same/cross-page question-answer-explanation relationships; content roles require controller review."
+  "description": "Schema 1.1 validates complete-block bindings, reading order and explicit teaching dependencies in addition to content protection. Schema 1.0 remains historical and reports ordering not checked; semantics still require controller review."
 }

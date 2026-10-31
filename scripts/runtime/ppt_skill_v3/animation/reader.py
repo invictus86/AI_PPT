@@ -71,8 +71,13 @@ def inventory_from_parts(parts, source):
             require(bool(ids), f"Missing object ID: {part}")
             values = [int(n.get("id")) for n in ids]
             texts = [n.text or "" for n in node.findall(".//a:t", NS)]
+            transform = node.find('p:grpSpPr/a:xfrm', NS) if kind == 'grpSp' else node.find('p:xfrm', NS) if kind == 'graphicFrame' else node.find('p:spPr/a:xfrm', NS)
+            off = transform.find('a:off', NS) if transform is not None else None
+            ext = transform.find('a:ext', NS) if transform is not None else None
+            bounds = [int(off.get('x')), int(off.get('y')), int(ext.get('cx')), int(ext.get('cy'))] if off is not None and ext is not None else None
             objects.append({"id": values[0], "name": ids[0].get("name", ""), "kind": kind,
                             "text": "\n".join(texts), "nested_ids": values[1:],
+                            "bounds": bounds,
                             "geometry": [dict(n.attrib) for n in node.findall(".//a:xfrm/*", NS)]})
         require(len(all_ids) == len(set(all_ids)), f"Duplicate shape ID: {part}")
         transition = slide.find("p:transition", NS)
