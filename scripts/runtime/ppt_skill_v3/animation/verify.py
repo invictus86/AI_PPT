@@ -5,7 +5,7 @@ import json
 from xml.etree import ElementTree as ET
 
 from .plan import require, steps
-from .reader import NS, P, digest, read_package
+from .reader import NS, P, digest, read_package, inventory_from_parts
 
 
 def _structure(node, *, slide_root=False):
@@ -98,8 +98,19 @@ def verify_parts(parts, baseline, plan):
     require(current["parts"] == baseline["parts"], "Non-animation content/parts changed")
     require(current["namespaces"] == baseline["namespaces"], "Namespace declarations changed")
     pages = [verify_timing(parts[p["part"]], p) for p in plan["pages"]]
+    from .initial_state import check_initial_state
+    inventory = inventory_from_parts(parts, plan["source"])
+    rows = {p["slide_index"]: p for p in inventory["pages"]}
+    initial = [check_initial_state(p, rows[p["slide_index"]]) for p in plan["pages"]]
     return {"ok": True, "content_unchanged": True, "content_signature": current["signature"],
-            "pages": pages, "playback": {"wps": "pending_native_playback", "powerpoint": "pending_native_playback"}}
+            "pages": pages, "initial_states": initial,
+            "animation_coverage": {"source_pages": len(rows), "selected_pages": len(pages),
+                                   "unselected_pages": sorted(set(rows) - {p["slide_index"] for p in plan["pages"]}),
+                                   "animated_pages": sum(p["animated"] for p in initial),
+                                   "static_exceptions": [{"page": p["slide_index"], "reason": p["static_reason"]}
+                                                         for p in initial if not p["animated"]],
+                                   "semantic_review": "controller_required"},
+            "playback": {"wps": "pending_native_playback", "powerpoint": "pending_native_playback"}}
 
 
 def verify_file(path, baseline, plan):

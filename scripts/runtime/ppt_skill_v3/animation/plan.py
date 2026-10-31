@@ -36,11 +36,13 @@ def validate_plan(plan, inventory=None):
     require(isinstance(plan["pages"], list) and plan["pages"], "Select at least one page")
     seen_pages = set()
     for page in plan["pages"]:
-        keys(page, {"slide_index", "part", "units", "needs_layering", "visual_checked"}, {"slide_index", "part", "units"})
+        keys(page, {"slide_index", "part", "units", "needs_layering", "visual_checked", "static_reason"}, {"slide_index", "part", "units"})
         index = page["slide_index"]
         require(type(index) is int and index > 0 and index not in seen_pages, "Duplicate or invalid page")
         seen_pages.add(index)
         require(isinstance(page["part"], str) and bool(page["part"]), "Missing slide part")
+        require("static_reason" not in page or isinstance(page["static_reason"], str) and bool(page["static_reason"].strip()),
+                "static_reason must be a nonempty explanation of this page's exception")
         for key in ("needs_layering", "visual_checked"):
             require(key not in page or type(page[key]) is bool, f"{key} must be boolean")
         require(not page.get("needs_layering"), f"Page {index}: needs_layering; content cannot be split by animation")
@@ -93,6 +95,8 @@ def validate_plan(plan, inventory=None):
                 require(page.get("visual_checked") is True, "Question page contains images/graphics: inspect existing preview for baked-in answers")
             require(not row["auto_advance"], "Automatic slide advance conflicts with manual reveal; adjust separately")
             require(not row["has_timing"] or plan["existing_timing_policy"] == "replace_selected", "Existing timing: explicitly select replace_selected within authorized pages")
+            from .initial_state import check_initial_state
+            check_initial_state(page, row)
     return plan
 
 

@@ -76,7 +76,9 @@ def inventory_from_parts(parts, source):
                             "geometry": [dict(n.attrib) for n in node.findall(".//a:xfrm/*", NS)]})
         require(len(all_ids) == len(set(all_ids)), f"Duplicate shape ID: {part}")
         transition = slide.find("p:transition", NS)
+        from .initial_state import describe_initial_context
         pages.append({"slide_index": index, "part": part,
+                      "initial_context": describe_initial_context(parts, part, slide, size),
                       "title": next((o["text"].split("\n")[0][:100] for o in objects if o["text"]), "（无可提取文字）"),
                       "objects": objects, "has_timing": slide.find("p:timing", NS) is not None,
                       "auto_advance": transition is not None and transition.get("advTm") is not None,

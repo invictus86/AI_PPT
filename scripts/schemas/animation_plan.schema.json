@@ -112,6 +112,11 @@
           },
           "visual_checked": {
             "type": "boolean"
+          },
+          "static_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Concrete current-page basis for a static exception. Required by runtime when all units use click=0; reading/writing/no-split alone is insufficient."
           }
         },
         "required": [
