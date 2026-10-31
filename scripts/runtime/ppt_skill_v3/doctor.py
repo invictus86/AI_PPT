@@ -19,6 +19,7 @@ from .stage1_plan import load_stage1_slides
 from .stage2_trial import stage2_trial_first5_results_complete
 from .state import stage3_lesson_plan_required
 from .validation import (
+    ValidationError,
     validate_image_result,
     validate_lesson_plan_manifest,
     validate_lesson_plan_qa,
@@ -108,7 +109,14 @@ def _check_content_acceptances(root: Path, issues: list[str]) -> None:
     if not (root / "_state/project_state.json").is_file():
         return
     state = read_json(root / "_state/project_state.json")
-    from .thematic_workflow import require_content_review
+    from .thematic_workflow import require_content_review, require_combined_authorization, require_trial_continuation
+    if "2-3" in state.get("workflow", {}).get("authorizations", {}):
+        try:
+            require_combined_authorization(state)
+            if state.get("controller_acceptances", {}).get("stage2_trial_first5"):
+                require_trial_continuation(state)
+        except (ValidationError, ValueError, OSError, KeyError) as exc:
+            issues.append(f"二合一授权或试样验收失效：{exc}")
     scopes = []
     if state.get("controller_acceptances", {}).get("stage1_plan"):
         scopes.append("planning")
@@ -242,7 +250,7 @@ def _check_stage1_stage2_consistency(root: Path, issues: list[str], warnings: li
         if not (root / "_state" / "阶段1" / "layout_safety_contract.json").exists():
             issues.append("新流程进入阶段2后必须有 _state/阶段1/layout_safety_contract.json")
 
-    if status == "waiting_user_trial_first5_confirmation" and not stage2_trial_first5_results_complete(root):
+    if status in {"waiting_user_trial_first5_confirmation", "stage2_trial_first5_pending_controller_acceptance"} and not stage2_trial_first5_results_complete(root):
         issues.append("阶段2状态等待试样确认，但当前试样集合图片缺失、过期或记录不一致")
     if current_stage == "stage2" and status == "full_deck_pending_controller_qa" and not existing_stage2_image_pdf_rel(root, state):
         issues.append("阶段2状态等待图片版 PDF 确认，但缺少主题化命名的阶段2图片版 PDF")
@@ -281,7 +289,8 @@ def _check_stage1_stage2_consistency(root: Path, issues: list[str], warnings: li
         warnings.append("阶段2已进入用户确认相关状态，但尚未记录 stage2_aesthetic_review.json")
 
     scope = {"waiting_user_cover_style_selection": "cover_options",
-             "waiting_user_trial_first5_confirmation": "trial_first5"}.get(status)
+             "waiting_user_trial_first5_confirmation": "trial_first5",
+             "stage2_trial_first5_pending_controller_acceptance": "trial_first5"}.get(status)
     if scope and current_stage == "stage2":
         from .stage2_visual_qa import require_stage2_aesthetic_review
         try:

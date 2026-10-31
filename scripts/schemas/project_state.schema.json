@@ -164,7 +164,38 @@
           ]
         },
         "authorizations": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "2-3": {
+              "type": "object",
+              "required": [
+                "step",
+                "evidence",
+                "basis",
+                "covers",
+                "recorded_at"
+              ],
+              "properties": {
+                "step": {
+                  "const": "2-3"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "basis": {
+                  "type": "object",
+                  "minProperties": 3
+                },
+                "covers": {
+                  "type": "array"
+                },
+                "recorded_at": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       },
       "additionalProperties": false
@@ -180,6 +211,9 @@
           "type": "boolean"
         },
         "stage2_image_deck": {
+          "type": "boolean"
+        },
+        "stage2_trial_first5": {
           "type": "boolean"
         }
       }

@@ -24,7 +24,7 @@ def sync_stage_docs(run_dir: str | Path) -> None:
 - 当前状态：{state['status']}
 - 待处理人：{state['required_actor']}
 - 最近决策：{state.get('last_decision_id') or '暂无'}
-- 执行方式：三个基础步骤；独立动画专项
+- 执行方式：{'第二步＋第三步二合一快捷命令' if '2-3' in state.get('workflow', {}).get('authorizations', {}) else '三个基础步骤'}；独立动画专项
 - 动画专项：{state.get('stage5_animation', {}).get('status', 'not_started')}
 
 ## 下一步
@@ -36,6 +36,7 @@ def sync_stage_docs(run_dir: str | Path) -> None:
 - 阶段1规划：{_yes_no(state['confirmed'].get('stage1_plan'))}
 - 阶段2封面风格：{_yes_no(state['confirmed'].get('stage2_cover_style'))}
 - 阶段2试样：{_yes_no(state['confirmed'].get('stage2_trial_first5'))}
+- 阶段2试样主控验收：{'已验收' if state.get('controller_acceptances', {}).get('stage2_trial_first5') else '未验收'}；与用户确认分开记录
 - 全稿用户确认：未将第三步授权冒充全稿确认
 - 全稿主控验收：{'已验收' if state.get('controller_acceptances', {}).get('stage2_image_deck') else '未验收'}
 - 阶段3锁定稿来源：{_stage3_source_label(state)}

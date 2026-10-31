@@ -37,6 +37,7 @@ def build_next_action(run_dir: str | Path, *, persist: bool = False) -> dict[str
         "summary": state.get("next_required_action") or "",
         "source": "project_state.next_required_action",
         "confirmation_required": state.get("required_actor") == "user",
+        "execution_mode": "combined_2_3" if "2-3" in state.get("workflow", {}).get("authorizations", {}) else state["workflow"]["mode"],
         "candidate_decision_types": _candidate_decision_types(root, state),
         "suggested_command_groups": _suggested_command_groups(state),
         "created_at": now_iso(),
@@ -82,6 +83,7 @@ def build_resume_brief(run_dir: str | Path, *, persist: bool = False, compact: b
         "required_actor": state["required_actor"],
         "confirmed": state.get("confirmed", {}),
         "workflow": state.get("workflow", {}),
+        "execution_mode": next_action["execution_mode"],
         "thematic_brief": state.get("thematic_brief", {}),
         "controller_acceptances": state.get("controller_acceptances", {}),
         "stage5_animation": state.get("stage5_animation", {}),
@@ -154,6 +156,7 @@ def render_resume_brief_markdown(brief: dict[str, Any]) -> str:
         f"- 当前阶段：{brief.get('current_stage')}",
         f"- 当前状态：{brief.get('status')}",
         f"- 当前责任方：{brief.get('required_actor')}",
+        f"- 执行方式：{brief.get('execution_mode')}；用户试样确认与主控内部验收分别记录",
         "",
         "## 下一步",
         "",
@@ -265,6 +268,8 @@ def _candidate_decision_types(root: Path, state: dict[str, Any]) -> list[str]:
         return ["approve_stage2_cover_style_start_image_deck", "request_stage2_cover_style_revision"]
     if stage == "stage2" and status == "waiting_user_trial_first5_confirmation":
         return ["approve_stage2_trial_first5_continue_remaining", "request_stage2_trial_first5_revision"]
+    if stage == "stage2" and status == "stage2_trial_first5_pending_controller_acceptance":
+        return ["accept_stage2_trial_first5_continue_remaining", "request_stage2_trial_first5_revision"]
     if stage == "stage2" and status == "full_deck_pending_controller_qa":
         return ["accept_full_deck_start_stage3", "request_stage2_revision"]
     if stage == "stage3" and status in {"stage3_script_generated", "stage3_lesson_plan_generated"} and _stage3_required_outputs_generated(root, state):
@@ -296,6 +301,8 @@ def _suggested_command_groups(state: dict[str, Any]) -> list[str]:
     if stage == "stage1":
         return ["configure-project", "record-content-review", "create-stage1-draft", "validate-stage1", "record-decision", "execute-decision"]
     if stage == "stage2":
+        if status == "stage2_trial_first5_pending_controller_acceptance":
+            return ["make-decision", "execute-decision"]
         if status == "full_deck_pending_controller_qa":
             return ["record-content-review", "record-stage2-visual-qa", "make-decision", "execute-decision"]
         if status == "ready_for_stage2_cover_options":

@@ -27,6 +27,7 @@ STAGE2_IMAGE_ROUTE_DECISIONS = {
     "accept_stage1_start_covers",
     "approve_stage2_cover_style_start_image_deck",
     "approve_stage2_trial_first5_continue_remaining",
+    "accept_stage2_trial_first5_continue_remaining",
 }
 STAGE2_IMAGE_DISPATCH_ACTIONS = {
     "dispatch_stage2_cover_options",
@@ -127,6 +128,7 @@ DECISION_ROUTES = {
     "request_stage2_cover_style_revision": ("stage2", "stage2"),
     "stage2_trial_first5_ready_for_user_review": ("stage2", "stage2"),
     "approve_stage2_trial_first5_continue_remaining": ("stage2", "stage2"),
+    "accept_stage2_trial_first5_continue_remaining": ("stage2", "stage2"),
     "request_stage2_trial_first5_revision": ("stage2", "stage2"),
     "accept_full_deck_start_stage3": ("stage2", "stage3"),
     "request_stage2_revision": ("stage2", "stage2"),
@@ -314,6 +316,10 @@ def validate_project_state(data: Any) -> dict[str, Any]:
         raise ValidationError("workflow authorizations and target brief must be objects")
     for key in ("stage1_plan", "stage2_image_deck"):
         _require_bool(state["controller_acceptances"], key, "controller_acceptances")
+    if "stage2_trial_first5" in state["controller_acceptances"]:
+        _require_bool(state["controller_acceptances"], "stage2_trial_first5", "controller_acceptances")
+    if "2-3" in state["workflow"]["authorizations"] and state["confirmed"].get("stage2_trial_first5"):
+        raise ValidationError("combined workflow must not claim human trial confirmation")
     if state["stage5_animation"].get("status") not in {"not_started", "waiting_valid_input", "planning", "plan_ready", "executing", "needs_manual_adjustment", "waiting_background_review", "waiting_font_review", "verification_skipped", "completed", "failed"}:
         raise ValidationError("invalid independent animation status")
     animation = state["stage5_animation"]
@@ -554,7 +560,7 @@ def validate_controller_decision(data: Any) -> dict[str, Any]:
             raise ValidationError("user_confirmed is required for this decision type")
         if not decision["controller_reviewed"]:
             raise ValidationError("controller_reviewed is required for this decision type")
-    if decision["decision_type"] in {"accept_stage1_start_covers", "accept_full_deck_start_stage3", "stage3_outputs_completed", "stage4_deliverables_organized"}:
+    if decision["decision_type"] in {"accept_stage1_start_covers", "accept_stage2_trial_first5_continue_remaining", "accept_full_deck_start_stage3", "stage3_outputs_completed", "stage4_deliverables_organized"}:
         if decision["user_confirmed"] or not decision["controller_reviewed"]:
             raise ValidationError("internal acceptance requires controller_reviewed=true and user_confirmed=false")
     _validate_controller_decision_image_route(decision, actions if isinstance(actions, list) else [])

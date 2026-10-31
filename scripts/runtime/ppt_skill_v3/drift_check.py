@@ -11,7 +11,7 @@ from .paths import control_dir, project_state_path
 from .stage1_plan import load_stage1_slides
 from .state import read_state, stage3_lesson_plan_required
 from .time_utils import now_iso
-from .validation import validate_stage1_plan
+from .validation import ValidationError, validate_stage1_plan
 
 
 READ_ONLY_ACTIONS = {"status", "doctor", "resume_brief", "next_action", "drift_check"}
@@ -162,7 +162,14 @@ def _check_action(root: Path, state: dict[str, Any], action: str, issues: list[s
         key, message = requirement
         confirmed = state.get("confirmed") if isinstance(state.get("confirmed"), dict) else {}
         effective = state.get("controller_acceptances", {}) if key in {"stage1_plan", "stage2_image_deck"} else confirmed
-        if not effective.get(key):
+        combined_trial = key == "stage2_trial_first5" and "2-3" in state.get("workflow", {}).get("authorizations", {})
+        if combined_trial:
+            from .thematic_workflow import require_step
+            try:
+                require_step(state, 3)
+            except (ValidationError, ValueError, OSError, KeyError) as exc:
+                issues.append(f"二合一试样放行失效：{exc}")
+        elif not effective.get(key):
             if action in {"build_speaker_script", "build_lesson_plan"} and _has_external_locked_stage3_source(state):
                 return
             issues.append(message)

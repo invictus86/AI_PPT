@@ -26,6 +26,7 @@ DEFAULT_ALLOWED_ACTIONS: dict[str, list[str]] = {
     "request_stage2_cover_style_revision": ["revise_stage2_cover_options"],
     "stage2_trial_first5_ready_for_user_review": [],
     "approve_stage2_trial_first5_continue_remaining": ["promote_stage2_trial_first5", "dispatch_stage2_remaining"],
+    "accept_stage2_trial_first5_continue_remaining": ["promote_stage2_trial_first5", "dispatch_stage2_remaining"],
     "request_stage2_trial_first5_revision": ["revise_stage2_trial_first5"],
     "accept_full_deck_start_stage3": ["build_lesson_plan_context", "build_lesson_plan", "build_speaker_script", "record_content_review"],
     "request_stage2_revision": ["revise_stage2_image_deck"],
@@ -43,6 +44,7 @@ STAGE2_IMAGE_ROUTE_DECISIONS = {
     "accept_stage1_start_covers",
     "approve_stage2_cover_style_start_image_deck",
     "approve_stage2_trial_first5_continue_remaining",
+    "accept_stage2_trial_first5_continue_remaining",
 }
 
 STAGE2_IMAGE_DISPATCH_ACTIONS = {

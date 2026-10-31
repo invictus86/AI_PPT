@@ -96,7 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     settings_parser.add_argument("--settings", required=True)
     authorization_parser = subparsers.add_parser("authorize-step", help="Record the actual human request authorizing one whole step.")
     authorization_parser.add_argument("--run-dir", required=True)
-    authorization_parser.add_argument("--step", type=int, choices=[1, 2, 3], required=True)
+    authorization_parser.add_argument("--step", choices=["1", "2", "3", "2-3"], required=True,
+                                      help="2-3: explicit combined trial and full-delivery authorization; keeps trial QA")
     authorization_parser.add_argument("--evidence", required=True)
     depth_parser = subparsers.add_parser("record-content-review", help="Record evidence-based controller content review; no automatic quality score.")
     depth_parser.add_argument("--run-dir", required=True)

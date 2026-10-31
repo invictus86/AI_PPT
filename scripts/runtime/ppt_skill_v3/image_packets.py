@@ -284,8 +284,9 @@ def _require_stage2_open(state: dict[str, Any]) -> None:
     if not state["confirmed"].get("stage2_cover_style"):
         raise ValidationError("stage2 image deck packets require approved cover style")
     skip = state.get("stage2_trial_skip", {})
-    if not state["confirmed"].get("stage2_trial_first5") and not (skip.get("user_authorized") is True and skip.get("reason")):
-        raise ValidationError("先确认总共5页试样；用户明确跳过时须记录授权理由")
+    if "2-3" in state["workflow"]["authorizations"] or not (skip.get("user_authorized") is True and skip.get("reason")):
+        from .thematic_workflow import require_trial_continuation
+        require_trial_continuation(state)
 
 
 def _has_current_formal_result(root: Path, slide_index: int) -> bool:

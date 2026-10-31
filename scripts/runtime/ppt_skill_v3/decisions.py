@@ -90,6 +90,7 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["confirmed"]["stage2_trial_first5"] = False
         state["workflow"]["authorizations"].pop("2", None)
         state["workflow"]["authorizations"].pop("3", None)
+        state["workflow"]["authorizations"].pop("2-3", None)
         state["next_required_action"] = "主控大模型修订阶段1页面规划、每页干净逐字稿、PPT一致性或图片风格"
     elif decision_type == "stage2_cover_options_ready_for_user_review":
         _require_cover_options_ready(run_dir)
@@ -115,7 +116,12 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["user_artifacts"]["selected_cover_style"] = "_state/阶段2/cover_options/selection/selection.json"
         state["quality"]["stage2_cover_options"] = "confirmed"
         state["next_required_action"] = "由主控大模型先将无明显质量问题的已选封面候选转正为正式封面页，再分发阶段2B试样；试样确认后生成剩余页面并打包图片版 PDF"
+        if "2-3" in state["workflow"]["authorizations"]:
+            state["next_required_action"] = "二合一已授权：转正合格封面，完成前5页逐张检查后由主控内部放行，连续完成全稿、配套和整理，不等待试样人工确认"
     elif decision_type == "request_stage2_cover_style_revision":
+        for key in ("2", "3", "2-3"):
+            state["workflow"]["authorizations"].pop(key, None)
+        state["controller_acceptances"]["stage2_trial_first5"] = False
         state["confirmed"]["stage2_cover_style"] = False
         state["confirmed"]["stage2_trial_first5"] = False
         state["confirmed"]["stage2_image_deck"] = False
@@ -127,6 +133,8 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["quality"]["stage2"] = "needs_revision"
         state["next_required_action"] = "主控大模型组织阶段2A封面风格候选返工"
     elif decision_type == "stage2_trial_first5_ready_for_user_review":
+        if "2-3" in state["workflow"]["authorizations"]:
+            raise ValidationError("combined steps use controller trial acceptance, not the user-review checkpoint")
         if not state["confirmed"].get("stage2_cover_style"):
             raise ValidationError("stage2 cover style must be confirmed before trial first5 review")
         if not stage2_trial_first5_results_complete(run_dir):
@@ -139,6 +147,8 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["quality"]["stage2_trial_first5"] = "pending_user_review"
         state["next_required_action"] = "等待用户确认阶段2B试样；有问题则返工阶段2设计规划和提示词"
     elif decision_type == "approve_stage2_trial_first5_continue_remaining":
+        if "2-3" in state["workflow"]["authorizations"]:
+            raise ValidationError("combined trial acceptance must not be recorded as human sample confirmation")
         _require_state_status(state, "waiting_user_trial_first5_confirmation", decision_type)
         require_stage2_aesthetic_review(run_dir, scope="trial_first5")
         from .thematic_workflow import require_step
@@ -151,8 +161,23 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         state["required_actor"] = "main_controller"
         state["quality"]["stage2_trial_first5"] = "confirmed"
         state["next_required_action"] = "由主控大模型复用已确认试样并生成剩余页面，然后打包图片版 PDF"
+    elif decision_type == "accept_stage2_trial_first5_continue_remaining":
+        _require_state_status(state, "stage2_trial_first5_pending_controller_acceptance", decision_type)
+        from .thematic_workflow import require_combined_authorization, require_combined_trial_review
+        require_combined_authorization(state)
+        if not state["confirmed"].get("stage1_plan") or not state["confirmed"].get("stage2_cover_style"):
+            raise ValidationError("combined trial acceptance requires confirmed planning and cover")
+        require_combined_trial_review(state)
+        state["controller_acceptances"]["stage2_trial_first5"] = True
+        state["confirmed"]["stage2_trial_first5"] = False
+        state["status"] = "ready_for_stage2_remaining_images"
+        state["required_actor"] = "main_controller"
+        state["quality"]["stage2_trial_first5"] = "controller_accepted"
+        state["next_required_action"] = "二合一：复用内部验收通过的前5页，继续剩余页面、全稿验收、配套与整理；未记录用户试样确认"
     elif decision_type == "request_stage2_trial_first5_revision":
-        _require_state_status(state, "waiting_user_trial_first5_confirmation", decision_type)
+        if state["status"] not in {"waiting_user_trial_first5_confirmation", "stage2_trial_first5_pending_controller_acceptance"}:
+            raise ValidationError("trial revision requires a current trial review checkpoint")
+        state["controller_acceptances"]["stage2_trial_first5"] = False
         state["confirmed"]["stage2_trial_first5"] = False
         state["confirmed"]["stage2_image_deck"] = False
         state["current_stage"] = "stage2"
@@ -170,7 +195,7 @@ def execute_decision(run_dir: str | Path, decision: dict[str, Any]) -> dict[str,
         require_stage2_aesthetic_review(run_dir, scope="full_image_deck")
         locked_source = {"source_mode": "stage2_image_deck", "source_path": stage2_pdf,
                          "source_sha256": _file_sha256(Path(run_dir) / stage2_pdf),
-                         "confirmation_basis": "用户授权第三步；主控依据实际全稿深度审阅和视觉验收锁定，非用户全稿确认",
+                         "confirmation_basis": "用户授权" + ("第二步＋第三步二合一" if "2-3" in state["workflow"]["authorizations"] else "第三步") + "；主控依据实际全稿深度审阅和视觉验收锁定，非用户全稿确认",
                          "acceptance_actor": "main_controller"}
         state["controller_acceptances"]["stage2_image_deck"] = True
         state["confirmed"]["stage2_image_deck"] = False

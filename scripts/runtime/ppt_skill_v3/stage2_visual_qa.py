@@ -43,12 +43,16 @@ def record_stage2_aesthetic_review(run_dir: str | Path, review_file: str | Path)
     if status == "needs_rework":
         state["required_actor"] = "main_controller"
         if scope == "trial_first5":
+            state["controller_acceptances"]["stage2_trial_first5"] = False
             state["confirmed"]["stage2_trial_first5"] = False
             state["confirmed"]["stage2_image_deck"] = False
             state["status"] = "trial_first5_revision_requested"
             state["quality"]["stage2_trial_first5"] = "needs_revision"
             state["next_required_action"] = "主控大模型返工阶段2设计规划、layout_intent 或提示词；除非用户明确改内容，不修改阶段1任务"
         elif scope == "cover_options":
+            for key in ("2", "3", "2-3"):
+                state["workflow"]["authorizations"].pop(key, None)
+            state["controller_acceptances"]["stage2_trial_first5"] = False
             state["confirmed"]["stage2_cover_style"] = False
             state["confirmed"]["stage2_trial_first5"] = False
             state["confirmed"]["stage2_image_deck"] = False
@@ -62,10 +66,16 @@ def record_stage2_aesthetic_review(run_dir: str | Path, review_file: str | Path)
             state["next_required_action"] = "主控大模型组织阶段2正式图片页返工"
     else:
         if scope == "trial_first5":
+            state["controller_acceptances"]["stage2_trial_first5"] = False
             state["quality"]["stage2_trial_first5"] = "qa_passed"
             state["status"] = "waiting_user_trial_first5_confirmation"
             state["required_actor"] = "user"
             state["next_required_action"] = "试样已逐张对照阶段1文字检查并记录通过，展示前5页等待用户确认"
+            if "2-3" in state["workflow"]["authorizations"]:
+                state["confirmed"]["stage2_trial_first5"] = False
+                state["status"] = "stage2_trial_first5_pending_controller_acceptance"
+                state["required_actor"] = "main_controller"
+                state["next_required_action"] = "二合一：前5页逐张检查通过；核对连续授权后执行内部accept_stage2_trial_first5_continue_remaining，不等待人工确认"
         elif scope == "cover_options":
             state["quality"]["stage2_cover_options"] = "qa_passed"
             state["status"] = "waiting_user_cover_style_selection"

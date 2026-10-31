@@ -342,6 +342,10 @@ def reconcile_image_style(run_dir: str | Path, *, reason: str, affected_slides: 
             state['confirmed']['stage2_cover_style'] = False
         if cover in affected or affected & trial:
             state['confirmed']['stage2_trial_first5'] = False
+            state['controller_acceptances']['stage2_trial_first5'] = False
+        if cover in affected:
+            for key in ('2', '3', '2-3'):
+                state['workflow']['authorizations'].pop(key, None)
         state['confirmed']['stage2_image_deck'] = False
         state['quality']['stage2'] = 'needs_revision'
         state['status'] = 'ready_for_stage2_cover_options' if cover in affected else ('trial_first5_revision_requested' if affected & trial else 'ready_for_stage2_remaining_images')

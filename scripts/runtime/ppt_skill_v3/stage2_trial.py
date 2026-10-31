@@ -319,8 +319,10 @@ def write_stage2_trial_summary(run_dir: str | Path, batch_file: str | Path | Non
 def promote_stage2_trial_first5(run_dir: str | Path, *, force: bool = False) -> list[Path]:
     root = Path(run_dir)
     state = read_state(root)
-    if state["current_stage"] != "stage2" or not state["confirmed"].get("stage2_trial_first5"):
-        raise ValidationError("trial first5 promotion requires user-approved trial first5")
+    if state["current_stage"] != "stage2":
+        raise ValidationError("trial first5 promotion requires stage2")
+    from .thematic_workflow import require_trial_continuation
+    require_trial_continuation(state)
     if not stage2_trial_first5_results_complete(root):
         raise ValidationError("当前试样集合尚未完整或图片已变化")
     promoted_paths = []
@@ -355,6 +357,8 @@ def authorize_stage2_trial_skip(run_dir: str | Path, *, reason: str) -> dict[str
     if not reason.strip():
         raise ValidationError("跳过试样必须记录用户明确授权理由")
     state = read_state(root)
+    if "2-3" in state["workflow"]["authorizations"]:
+        raise ValidationError("combined steps retain trial first5; trial skip is not the combined route")
     if state["current_stage"] != "stage2" or not state["confirmed"].get("stage2_cover_style"):
         raise ValidationError("跳过试样只能在阶段2封面风格已确认后记录")
     if state["confirmed"].get("stage2_trial_first5"):
@@ -641,6 +645,8 @@ def _require_stage2_trial_open(state: dict[str, Any]) -> None:
 def _trial_confirmed_or_skipped(state: dict[str, Any]) -> bool:
     from .thematic_workflow import require_step
     require_step(state, 3)
+    if "2-3" in state["workflow"]["authorizations"]:
+        return True  # require_step verified continuous authority and current trial QA.
     if state["confirmed"].get("stage2_trial_first5"):
         return True
     skip = state.get("stage2_trial_skip")

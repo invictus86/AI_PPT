@@ -45,7 +45,8 @@
         "stage3_outputs_completed",
         "request_stage3_lesson_plan_revision",
         "stage4_deliverables_organized",
-        "request_stage4_organize_revision"
+        "request_stage4_organize_revision",
+        "accept_stage2_trial_first5_continue_remaining"
       ]
     },
     "from_stage": {
@@ -83,7 +84,8 @@
               "accept_stage1_start_covers",
               "accept_full_deck_start_stage3",
               "stage3_outputs_completed",
-              "stage4_deliverables_organized"
+              "stage4_deliverables_organized",
+              "accept_stage2_trial_first5_continue_remaining"
             ]
           }
         }

@@ -106,21 +106,34 @@ def education_context_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "applicability": brief.get("applicability", "所选学段通用；按活动采用简化或拓展替代用法")}
 
 
-def authorize_step(run_dir: str | Path, step: int, evidence: str) -> dict[str, Any]:
+def authorize_step(run_dir: str | Path, step: int | str, evidence: str) -> dict[str, Any]:
     root = Path(run_dir)
     state = read_state(root)
+    if step != "2-3":
+        try:
+            step = int(step)
+        except (ValueError, TypeError):
+            raise ValidationError("step must be 1, 2, 3 or 2-3")
     valid = {1: {"initialized", "stage1_draft", "planning_revision_requested", "revision_requested"},
              2: {"waiting_user_cover_style_selection"},
-             3: {"waiting_user_trial_first5_confirmation"}}
+             3: {"waiting_user_trial_first5_confirmation"},
+             "2-3": {"waiting_user_cover_style_selection"}}
     if step not in valid or state["status"] not in valid[step]:
         raise ValidationError("step authorization is not valid at the current checkpoint")
     if not isinstance(evidence, str) or not evidence.strip():
         raise ValidationError("quote the actual human request authorizing this entire step")
     entry = {"step": step, "evidence": evidence, "recorded_at": now_iso(),
              "covers": {1: ["stage0", "stage1", "stage2_covers"], 2: ["stage2_trial"],
-                        3: ["stage2_remaining", "stage2_qa", "stage3", "stage4"]}[step]}
-    if step in {2, 3}:
+                        3: ["stage2_remaining", "stage2_qa", "stage3", "stage4"],
+                        "2-3": ["stage2_trial", "stage2_remaining", "stage2_qa", "stage3", "stage4"]}[step]}
+    if step in {2, 3, "2-3"}:
         entry["basis"] = authorization_basis(root, step)
+    # Switching back to the ordinary Step 2 explicitly removes continuous authority.
+    if step in {2, "2-3"}:
+        for key in ("2", "3", "2-3"):
+            state["workflow"]["authorizations"].pop(key, None)
+        state["controller_acceptances"]["stage2_trial_first5"] = False
+        state["confirmed"]["stage2_trial_first5"] = False
     state["workflow"]["authorizations"][str(step)] = entry
     write_state(root, state)
     append_event(root, "step_authorized", "main_controller", **entry)
@@ -128,6 +141,11 @@ def authorize_step(run_dir: str | Path, step: int, evidence: str) -> dict[str, A
 
 
 def require_step(state: dict[str, Any], step: int) -> None:
+    if step in {2, 3} and "2-3" in state.get("workflow", {}).get("authorizations", {}):
+        require_combined_authorization(state)
+        if step == 3:
+            require_trial_continuation(state)
+        return
     if str(step) not in state.get("workflow", {}).get("authorizations", {}):
         raise ValidationError(f"requires actual human authorization for step {step}; approval of a sample alone is insufficient")
     if step in {2, 3}:
@@ -136,11 +154,55 @@ def require_step(state: dict[str, Any], step: int) -> None:
             raise ValidationError("user authorization refers to a different content/target/sample version")
 
 
-def authorization_basis(root: Path, step: int) -> dict[str, str]:
+def require_combined_authorization(state: dict[str, Any]) -> None:
+    entry = state.get("workflow", {}).get("authorizations", {}).get("2-3", {})
+    if not isinstance(entry, dict) or not isinstance(entry.get("evidence"), str) or not entry["evidence"].strip():
+        raise ValidationError("requires explicit human authorization for combined steps 2-3")
+    if entry.get("step") != "2-3" or entry.get("covers") != ["stage2_trial", "stage2_remaining", "stage2_qa", "stage3", "stage4"]:
+        raise ValidationError("combined authorization must explicitly cover trial, full deck, QA, package and delivery")
+    if entry.get("basis") != authorization_basis(Path(state["run_dir"]), "2-3"):
+        raise ValidationError("combined authorization is stale: content, target or selected cover changed")
+
+
+def require_trial_continuation(state: dict[str, Any]) -> None:
+    if "2-3" not in state.get("workflow", {}).get("authorizations", {}):
+        if state.get("confirmed", {}).get("stage2_trial_first5"):
+            return
+        raise ValidationError("trial first5 requires actual user confirmation")
+    require_combined_authorization(state)
+    if (not state.get("confirmed", {}).get("stage1_plan")
+            or not state["confirmed"].get("stage2_cover_style")
+            or state.get("controller_acceptances", {}).get("stage2_trial_first5") is not True):
+        raise ValidationError("combined steps require confirmed planning/cover and controller-accepted trial first5")
+    require_combined_trial_review(state)
+
+
+def require_combined_trial_review(state: dict[str, Any]) -> None:
+    from .stage2_trial import stage2_trial_first5_results_complete
+    from .stage2_visual_qa import require_stage2_aesthetic_review
+    selection = read_json(Path(state["run_dir"]) / "_state/阶段2/trial_first5/selection.json")
+    indices = selection.get("selected_slide_indices", [])
+    content = read_json(Path(state["run_dir"]) / "_state/阶段1/content.json")
+    covers = {s["slide_index"] for s in content["slides"] if s.get("page_type") == "cover"}
+    if len(indices) != 5 or not covers.intersection(indices):
+        raise ValidationError("combined steps retain a five-page trial including the cover")
+    if not stage2_trial_first5_results_complete(state["run_dir"]):
+        raise ValidationError("combined trial first5 is incomplete or stale")
+    require_stage2_aesthetic_review(state["run_dir"], scope="trial_first5")
+
+
+def authorization_basis(root: Path, step: int | str) -> dict[str, str]:
     import json
     brief = read_state(root).get("thematic_brief", {})
     basis = {"@thematic_brief": "sha256:" + hashlib.sha256(json.dumps(brief, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
              "_state/阶段1/content.json": _hash(root / "_state/阶段1/content.json")}
+    if step == "2-3":
+        # The controller prepares the user's chosen cover selection before recording
+        # continuous authority. Missing assets never become an unbound approval.
+        path = root / "_state/阶段2/cover_options/selection/selection.json"
+        if not path.is_file():
+            raise ValidationError("prepare the actual selected cover before authorizing combined steps 2-3")
+        basis[path.relative_to(root).as_posix()] = _hash(path)
     if step == 3:
         for path in [root / "_state/阶段2/cover_options/selection/selection.json",
                      *[root / f"阶段2_图片版PPT/img/slide_{i:03d}.png" for i in range(1, 6)]]:
