@@ -23,7 +23,7 @@ def keys(value, allowed, required):
 
 def validate_plan(plan, inventory=None):
     """Validate semantics without inferring answers or modifying the plan."""
-    keys(plan, {"schema_version", "source", "scene", "profile", "existing_timing_policy", "pages"},
+    keys(plan, {"schema_version", "source", "scene", "profile", "existing_timing_policy", "pages", "question_refs"},
          {"schema_version", "source", "scene", "profile", "existing_timing_policy", "pages"})
     require(plan["schema_version"] == "1.0" and plan["profile"] == PROFILE, "Unsupported animation plan/profile")
     require(isinstance(plan["scene"], str) and plan["scene"] in SCENES, "Unsupported scene")
@@ -34,6 +34,7 @@ def validate_plan(plan, inventory=None):
     if inventory is not None:
         require(plan["source"] == inventory["source"], "Source changed; inspect again and rebind plan")
     require(isinstance(plan["pages"], list) and plan["pages"], "Select at least one page")
+    require(isinstance(plan.get('question_refs', []), list), 'question_refs must be a list')
     seen_pages = set()
     for page in plan["pages"]:
         keys(page, {"slide_index", "part", "units", "needs_layering", "visual_checked", "static_reason"}, {"slide_index", "part", "units"})
@@ -47,9 +48,9 @@ def validate_plan(plan, inventory=None):
             require(key not in page or type(page[key]) is bool, f"{key} must be boolean")
         require(not page.get("needs_layering"), f"Page {index}: needs_layering; content cannot be split by animation")
         require(isinstance(page["units"], list), "Expected units list")
-        ids, targets, clicks, questions, answers = set(), [], set(), {}, {}
+        ids, targets, clicks, questions = set(), [], set(), {}
         for unit in page["units"]:
-            keys(unit, {"id", "role", "targets", "click", "question_id"}, {"id", "role", "targets", "click"})
+            keys(unit, {"id", "role", "targets", "click", "question_id", "is_title", "title_id", "title_exception_reason"}, {"id", "role", "targets", "click"})
             require(isinstance(unit["id"], str) and unit["id"] and unit["id"] not in ids, "Duplicate/empty unit id")
             ids.add(unit["id"])
             require(isinstance(unit["role"], str) and unit["role"] in ROLES, "Unsupported role")
@@ -60,6 +61,11 @@ def validate_plan(plan, inventory=None):
                     all(type(t) is int and t > 0 for t in unit["targets"]), "Invalid targets")
             targets.extend(unit["targets"])
             role, qid = unit["role"], unit.get("question_id")
+            require('is_title' not in unit or type(unit['is_title']) is bool, 'is_title must be boolean')
+            require('title_id' not in unit or isinstance(unit['title_id'], str) and bool(unit['title_id'].strip()), 'Invalid title_id')
+            require('title_exception_reason' not in unit or unit.get('is_title') is True and
+                    isinstance(unit['title_exception_reason'], str) and bool(unit['title_exception_reason'].strip()),
+                    'title_exception_reason requires a declared title and concrete reason')
             if qid is not None:
                 require(isinstance(qid, str) and bool(qid), "Invalid question_id")
             if role in {"question", "given", "options", "answer", "answer_marker", "explanation"}:
@@ -71,32 +77,22 @@ def validate_plan(plan, inventory=None):
                 require(click == 0, f"{role} must remain initially visible")
             if role == "answer":
                 require(click > 0, "Answer requires a new manual click")
-                answers.setdefault(qid, set()).add(click)
         require(len(targets) == len(set(targets)), "Duplicate target / mixed question-answer target: needs_layering")
         dynamic = sorted(clicks - {0})
         require(dynamic == list(range(1, len(dynamic) + 1)), "Click steps must be contiguous")
-        for qid, values in answers.items():
-            require(qid in questions and len(values) == 1, "Answer must bind one question and one synchronized step")
-        for unit in page["units"]:
-            role, qid = unit["role"], unit.get("question_id")
-            if role in {"given", "options", "answer", "answer_marker", "explanation"}:
-                require(qid in questions, "Unknown question_id")
-            if role in {"answer_marker", "explanation"}:
-                require(qid in answers, "Marker/explanation requires its answer")
-                answer_click = next(iter(answers[qid]))
-                require(unit["click"] == answer_click if role == "answer_marker" else unit["click"] > answer_click,
-                        "Marker must reveal with answer; explanation requires a later manual click")
         if inventory is not None:
             rows = [p for p in inventory["pages"] if p["slide_index"] == index]
             require(len(rows) == 1 and rows[0]["part"] == page["part"], "Slide order/part mismatch")
             row = rows[0]
             require(set(targets) == {o["id"] for o in row["objects"]}, "Missing or foreign targets; classify every top-level object")
-            if questions and row["has_visual_content"]:
+            if (questions or any(u['role'] in {'answer', 'answer_marker', 'explanation'} for u in page['units'])) and row["has_visual_content"]:
                 require(page.get("visual_checked") is True, "Question page contains images/graphics: inspect existing preview for baked-in answers")
             require(not row["auto_advance"], "Automatic slide advance conflicts with manual reveal; adjust separately")
             require(not row["has_timing"] or plan["existing_timing_policy"] == "replace_selected", "Existing timing: explicitly select replace_selected within authorized pages")
             from .initial_state import check_initial_state
             check_initial_state(page, row)
+    from .relations import check_relations
+    check_relations(plan, inventory)
     return plan
 
 

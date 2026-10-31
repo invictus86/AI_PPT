@@ -102,8 +102,10 @@ def verify_parts(parts, baseline, plan):
     inventory = inventory_from_parts(parts, plan["source"])
     rows = {p["slide_index"]: p for p in inventory["pages"]}
     initial = [check_initial_state(p, rows[p["slide_index"]]) for p in plan["pages"]]
+    from .relations import check_relations
+    relationships = check_relations(plan, inventory)
     return {"ok": True, "content_unchanged": True, "content_signature": current["signature"],
-            "pages": pages, "initial_states": initial,
+            "pages": pages, "initial_states": initial, "teaching_relationships": relationships,
             "animation_coverage": {"source_pages": len(rows), "selected_pages": len(pages),
                                    "unselected_pages": sorted(set(rows) - {p["slide_index"] for p in plan["pages"]}),
                                    "animated_pages": sum(p["animated"] for p in initial),

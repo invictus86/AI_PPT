@@ -96,6 +96,20 @@
                 "question_id": {
                   "type": "string",
                   "minLength": 1
+                },
+                "is_title": {
+                  "type": "boolean",
+                  "description": "Explicit main-page title declaration; never inferred from wording or size."
+                },
+                "title_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "ID of this unit's main-page title unit; local card title/body stay one unit."
+                },
+                "title_exception_reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Concrete teaching basis for revealing this title after related content."
                 }
               },
               "required": [
@@ -125,6 +139,46 @@
           "units"
         ]
       }
+    },
+    "question_refs": {
+      "type": "array",
+      "description": "Explicit same-source question anchors joining a teaching group across pages. No added PPT content.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "question_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "slide_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "visual_checked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "question_id",
+          "slide_index",
+          "targets",
+          "evidence"
+        ]
+      }
     }
   },
   "required": [
@@ -138,5 +192,5 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ppt-skill-v3.local/schemas/animation_plan.schema.json",
   "title": "ppt-skill-v3 animation plan",
-  "description": "Runtime additionally validates full object coverage, source binding and manual question-answer order."
+  "description": "Runtime validates full object coverage, source binding, declared title/body order and same/cross-page question-answer-explanation relationships; content roles require controller review."
 }
