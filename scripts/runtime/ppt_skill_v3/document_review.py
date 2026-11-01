@@ -16,6 +16,36 @@ from .render_cache import environment_fingerprint, valid_cache
 from .resources import resource_slot, path_identity, project_lock
 from .time_utils import now_iso
 from .validation import ValidationError
+from .document_renderer import RENDERERS, select_document_renderer
+
+
+def _render_environment():
+    files = [Path(__file__), Path(__file__).with_name('background_word.ps1'),
+             Path(__file__).with_name('document_renderer.py')]
+    poppler = find_pdftoppm()
+    if poppler:
+        files.append(Path(poppler))
+    renderer = select_document_renderer()
+    if renderer:
+        files.append(Path(renderer['executable']))
+    return environment_fingerprint(files)
+
+
+def _docx_proof_valid(manifest, selected=None):
+    selected = selected or select_document_renderer()
+    if not selected:
+        return False
+    proof = manifest.get('render_proof', {})
+    executable = Path(selected['executable']).resolve()
+    return (manifest.get('renderer') == selected['renderer']
+            and proof.get('renderer_provider') == selected['provider']
+            and proof.get('com_progid') == selected['progid']
+            and Path(proof.get('application_executable', '')).resolve() == executable
+            and Path(proof.get('application_path', '')).resolve() == executable.parent
+            and bool(proof.get('application_version'))
+            and proof.get('visible') is False and proof.get('read_only') is True
+            and proof.get('open_after_export') is False
+            and proof.get('document_pages') == manifest.get('pages'))
 
 
 def render_document(source, directory, *, timeout=600):
@@ -32,14 +62,14 @@ def render_document(source, directory, *, timeout=600):
     poppler = find_pdftoppm()
     if not poppler:
         raise ValidationError('缺少pdftoppm；文档布局验收阻断，不使用前台备用')
-    fingerprint = environment_fingerprint([Path(__file__),Path(__file__).with_name('background_word.ps1'),Path(poppler)])
+    fingerprint = _render_environment()
     with resource_slot('render-output:' + path_identity(directory)):
         manifest_path = directory/'document_manifest.json'
         if manifest_path.is_file():
             manifest = read_json(manifest_path)
             pdf = Path(manifest.get('layout_pdf','__missing__'))
             proof = manifest.get('render_proof',{})
-            hidden = source.suffix.lower()=='.pdf' or (manifest.get('renderer')=='Microsoft Word hidden ExportAsFixedFormat + pdftoppm' and proof.get('visible') is False and proof.get('read_only') is True and proof.get('document_pages')==manifest.get('pages'))
+            hidden = source.suffix.lower()=='.pdf' or _docx_proof_valid(manifest)
             if hidden and pdf.is_file() and file_sha256(pdf)==manifest.get('layout_pdf_sha256') and valid_cache(source,manifest,fingerprint) and manifest.get('foreground_opened') is False:
                 return manifest
         digest = file_sha256(source)
@@ -48,7 +78,10 @@ def render_document(source, directory, *, timeout=600):
         queue_seconds = 0
         if source.suffix.lower() == '.docx':
             if os.name != 'nt':
-                raise ValidationError('DOCX真实后台排版当前需要Windows/Microsoft Word；不启用WPS或前台备用')
+                raise ValidationError('DOCX后台排版需要Windows/WPS或Microsoft Word；禁止前台备用')
+            selected = select_document_renderer()
+            if not selected:
+                raise ValidationError('文档后台渲染环境已变化，请重新检测')
             shell = shutil.which('pwsh') or shutil.which('powershell')
             if not shell:
                 raise ValidationError('缺少后台PowerShell')
@@ -58,7 +91,8 @@ def render_document(source, directory, *, timeout=600):
                     pdf = Path(tmp)/'layout.pdf'; evidence = Path(tmp)/'evidence.json'
                     try:
                         process = subprocess.run([shell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(Path(__file__).with_name('background_word.ps1')),
-                            '-InputDocx',str(source),'-OutputPdf',str(pdf),'-EvidenceJson',str(evidence)],
+                            '-InputDocx',str(source),'-OutputPdf',str(pdf),'-EvidenceJson',str(evidence),
+                            '-Renderer',selected['provider'],'-ExpectedExecutable',selected['executable']],
                             capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,
                             creationflags=subprocess.CREATE_NO_WINDOW)
                     except subprocess.TimeoutExpired as exc:
@@ -68,11 +102,12 @@ def render_document(source, directory, *, timeout=600):
                     if process.returncode:
                         raise ValidationError('DOCX后台排版失败，未启用前台备用：'+(process.stderr or process.stdout)[-1500:])
                     proof = json.loads(evidence.read_text(encoding='utf-8-sig'))
-                    if proof.get('visible') is not False or proof.get('read_only') is not True or proof.get('open_after_export') is not False:
-                        raise ValidationError('Word后台证据不符合隐藏只读导出合同')
+                    if not _docx_proof_valid({'renderer':selected['renderer'], 'render_proof':proof,
+                                              'pages':proof.get('document_pages')}, selected):
+                        raise ValidationError('文档后台证据不符合实际渲染器及隐藏只读导出合同')
                     layout_pdf = directory/'docx_layout.pdf'
                     shutil.copy2(pdf,layout_pdf)
-            renderer = 'Microsoft Word hidden ExportAsFixedFormat + pdftoppm'
+            renderer = selected['renderer']
         else:
             layout_pdf = source
             renderer = 'pdftoppm'
@@ -81,7 +116,7 @@ def render_document(source, directory, *, timeout=600):
         count = pdf_page_count(layout_pdf)
         if not count or len(images) != count or (source.suffix.lower()=='.docx' and proof.get('document_pages') != count):
             raise ValidationError('后台文档页数证据或全页导出不一致')
-        if file_sha256(source) != digest or environment_fingerprint([Path(__file__),Path(__file__).with_name('background_word.ps1'),Path(poppler)]) != fingerprint:
+        if file_sha256(source) != digest or _render_environment() != fingerprint:
             raise ValidationError('文档或渲染环境变化，须重新渲染')
         manifest = {'method':'background_document_pages','input':str(source),'input_sha256':digest,
                     'environment_fingerprint':fingerprint,'renderer':renderer,'foreground_opened':False,
@@ -116,14 +151,14 @@ def _validate_review(root, review):
     source = Path(manifest['input']); source.resolve().relative_to(root.resolve())
     if file_sha256(source) != review.get('input_sha256') or manifest['input_sha256'] != review['input_sha256'] or manifest.get('foreground_opened') is not False:
         raise ValidationError('document review is stale or not background evidence')
-    if manifest.get('renderer') not in {'pdftoppm','Microsoft Word hidden ExportAsFixedFormat + pdftoppm'}:
+    if manifest.get('renderer') not in {'pdftoppm', *RENDERERS.values()}:
         raise ValidationError('unsupported document renderer')
     poppler = find_pdftoppm()
-    if not poppler or manifest.get('environment_fingerprint') != environment_fingerprint([Path(__file__),Path(__file__).with_name('background_word.ps1'),Path(poppler)]):
+    if not poppler or manifest.get('environment_fingerprint') != _render_environment():
         raise ValidationError('文档渲染环境已变化，必须重新渲染及审阅')
     if source.suffix.lower()=='.docx':
         proof = manifest.get('render_proof',{})
-        if manifest['renderer'] != 'Microsoft Word hidden ExportAsFixedFormat + pdftoppm' or proof.get('visible') is not False or proof.get('read_only') is not True or proof.get('open_after_export') is not False or proof.get('document_pages') != manifest.get('pages'):
+        if not _docx_proof_valid(manifest):
             raise ValidationError('DOCX layout cannot be proven by independently generated PDF')
     if file_sha256(manifest['layout_pdf']) != manifest['layout_pdf_sha256']:
         raise ValidationError('layout PDF changed')

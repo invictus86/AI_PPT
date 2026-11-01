@@ -17,7 +17,10 @@ def verification_capability(kind):
         if not (shutil.which('pwsh') or shutil.which('powershell')):
             missing.append('PowerShell')
         found = False
-        if os.name == 'nt':
+        if kind == 'docx':
+            from .document_renderer import select_document_renderer
+            found = select_document_renderer() is not None
+        elif os.name == 'nt':
             import winreg
             app = 'WINWORD.EXE' if kind == 'docx' else 'POWERPNT.EXE'
             for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
@@ -30,7 +33,7 @@ def verification_capability(kind):
                     except OSError:
                         pass
         if not found:
-            missing.append('Microsoft Word' if kind == 'docx' else 'Microsoft PowerPoint')
+            missing.append('WPS Writer 或 Microsoft Word（后台 COM）' if kind == 'docx' else 'Microsoft PowerPoint')
     if kind in {'docx', 'pdf'}:
         from .pdf_page_images import find_pdftoppm
         if not find_pdftoppm():

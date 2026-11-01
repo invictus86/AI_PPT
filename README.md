@@ -10,4 +10,4 @@
 
 私用便携包自带 Python、脚本依赖、Git、Poppler 和已有生图配置。解压后双击“开始使用”，在 Codex 中打开生成的 PPT 工作区。便携包包含凭据，仅在自己的电脑之间传输；本公开仓库只保存源码。
 
-修改前后双击 `scripts/双向同步.cmd`。本机修改会先保存为提交，再合并远端并上传；同一处有冲突时停止并保留双方提交。使用 Word/PPT 后台验证需本机已有 Microsoft Word 和 PowerPoint，Canva 需各自账号连接器授权。
+修改前后双击 `scripts/双向同步.cmd`。本机修改会先保存为提交，再合并远端并上传；同一处有冲突时停止并保留双方提交。DOCX 后台验证默认优先 WPS Writer，未注册可用 WPS 时使用 Microsoft Word；PPT 后台验证需要 PowerPoint。Canva 需各自账号连接器授权。
