@@ -162,6 +162,32 @@ def check_mapped_page(page, actual_units, expected_units):
         _require(item.get('original_decoration_confirmed') is True, 'confirm original decoration')
         _reason(item)
         consumed.add(i)
+    # A conversion may make a label from the original illustration editable.
+    # Account for that label separately from the approved prose, with the same
+    # bound page images and an exact approved substring, never arbitrary extras.
+    retained = page.get('retained_original_text', [])
+    _require(isinstance(retained, list), 'retained_original_text must be a list')
+    for item in retained:
+        _require(isinstance(item, dict), 'retained original text must be an object')
+        i = item.get('index')
+        _require(type(i) is int and 0 <= i < len(actual_units) and i not in consumed,
+                 'invalid or reused retained original text index')
+        text = actual_units[i]
+        _require(item.get('text') == text and bool(text), 'retained original text changed')
+        authority = item.get('authority_unit_index')
+        start, end = item.get('start'), item.get('end')
+        _require(type(authority) is int and 0 <= authority < len(expected_units)
+                 and type(start) is int and type(end) is int
+                 and 0 <= start < end <= len(expected_units[authority])
+                 and expected_units[authority][start:end] == text,
+                 'retained original label must equal an exact approved substring')
+        _require(item.get('original_graphic_confirmed') is True
+                 and item.get('current_editable_confirmed') is True
+                 and item.get('display_equivalent_confirmed') is True,
+                 'actually compare the original graphic label and current editable label')
+        _reason(item, 'visual_location')
+        _reason(item)
+        consumed.add(i)
     _require(consumed == set(range(len(actual_units))), 'extra or unaccounted editable text')
 
 
