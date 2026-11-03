@@ -97,7 +97,11 @@ def _kind(node, size, *, inherited=False):
         result = "text" if "text" in members else "visual" if any(members) else None
     elif _text_visible(node):
         result = "text"
-    elif kind == "pic" and node.find(".//a:blip", NS) is not None:
+    elif (kind == "pic" and node.find(".//a:blip", NS) is not None or
+          kind == "sp" and node.find("p:spPr/a:blipFill/a:blip", NS) is not None):
+        # Canva exports raster-filled freeforms as p:sp rather than p:pic.
+        # They are actual image content, including inside an unchanged group.
+        # Readability still requires the controller's current visual review.
         alpha = node.findall(".//a:alphaModFix", NS)
         result = None if any(a.get("amt") == "0" for a in alpha) else "visual"
     elif kind == "graphicFrame":
