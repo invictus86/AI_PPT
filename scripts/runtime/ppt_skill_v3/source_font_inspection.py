@@ -48,7 +48,7 @@ def installed_faces():
     return faces
 
 
-def prepare_source_copy(source, directory, *, force_fallback=False):
+def prepare_source_copy(source, directory, *, force_fallback=False, fallback_faces=()):
     """Prepare a persistent internal copy, with original package parts preserved."""
     source = Path(source).resolve(); directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
@@ -66,6 +66,7 @@ def prepare_source_copy(source, directory, *, force_fallback=False):
             cached = json.loads(previous.read_text(encoding='utf-8'))
             if (cached.get('preparation_fingerprint')==fingerprint and cached.get('source_path')==str(source)
                     and cached.get('source_sha256')==original and cached.get('forced_fallback')==force_fallback
+                    and cached.get('requested_fallback_faces',[])==sorted(fallback_faces)
                     and cached.get('copy_sha256')==file_sha256(target)):
                 return target, cached
         except (ValueError, OSError):
@@ -76,7 +77,8 @@ def prepare_source_copy(source, directory, *, force_fallback=False):
               'decoder': {'name': 'mtx-decompressor', 'version': '1.8.0', 'node_runtime': node,
                           'timeout_seconds': 90, 'heap_limit_mb': 1024},
               'purpose': 'source_content_inspection', 'original_font_appearance_verified': False,
-              'forced_fallback': force_fallback, 'preparation_fingerprint': fingerprint}
+              'forced_fallback': force_fallback, 'requested_fallback_faces':sorted(fallback_faces),
+              'preparation_fingerprint': fingerprint}
     updates = {}; embedded_faces = set(); failed_faces = set()
     with zipfile.ZipFile(source) as z:
         pres = etree.fromstring(z.read('ppt/presentation.xml'))
@@ -109,7 +111,7 @@ def prepare_source_copy(source, directory, *, force_fallback=False):
                     record.update(status='failed', code=code, reason=str(exc))
                     failed_faces.add(face)
                 report['fonts'].append(record)
-        failed_faces.update(embedded_faces if force_fallback else ())
+        failed_faces.update(embedded_faces if force_fallback else fallback_faces)
         fallback = next((f for f in ('Microsoft YaHei', '微软雅黑', 'Noto Sans CJK SC', 'PingFang SC', 'SimHei', 'Arial') if f.casefold() in faces), None)
         report['fallback_family'] = fallback
         if failed_faces:

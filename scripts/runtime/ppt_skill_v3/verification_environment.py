@@ -21,25 +21,21 @@ def verification_capability(kind):
             from .document_renderer import select_document_renderer
             found = select_document_renderer() is not None
         elif os.name == 'nt':
-            import winreg
-            app = 'WINWORD.EXE' if kind == 'docx' else 'POWERPNT.EXE'
-            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-                for view in (0, winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
-                    try:
-                        with winreg.OpenKey(hive, 'Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\'+app,
-                                            0, winreg.KEY_READ | view) as key:
-                            path = Path(winreg.QueryValueEx(key, '')[0].strip('"'))
-                            found |= path.is_file() and 'microsoft office' in str(path).lower()
-                    except OSError:
-                        pass
+            from .presentation_renderer import select_presentation_renderer
+            found = select_presentation_renderer() is not None
         if not found:
-            missing.append('WPS Writer 或 Microsoft Word（后台 COM）' if kind == 'docx' else 'Microsoft PowerPoint')
+            missing.append('WPS Writer 或 Microsoft Word（后台 COM）' if kind == 'docx' else 'WPS 演示（原生 KWPP.Application 后台 COM）')
     if kind in {'docx', 'pdf'}:
         from .pdf_page_images import find_pdftoppm
         if not find_pdftoppm():
             missing.append('pdftoppm')
-    return {'kind': kind, 'available': not missing, 'missing': missing,
+    result = {'kind': kind, 'available': not missing, 'missing': missing,
             'policy': '缺环境不验证；有环境必须验证；执行失败不等于缺环境；禁止前台备用'}
+    if kind == 'pptx':
+        from .presentation_renderer import select_presentation_renderer
+        result['renderer_selection'] = select_presentation_renderer()
+        result['probe_scope'] = 'read_only_registration_and_files_not_actual_render_or_visual_acceptance'
+    return result
 
 
 def skipped_verification(source, capability):

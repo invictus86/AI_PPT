@@ -355,11 +355,9 @@ def _require_previews(root: Path, task: dict[str, Any]) -> None:
             raise ValidationError('后台环境已具备或来源已变，必须重新导出预览')
         return
     if manifest.get('environment_fingerprint'):
-        from .render_cache import environment_fingerprint
-        from .embedded_fonts import decoder_files
-        renderer_module = Path(__file__).with_name('background_ppt.py')
-        if manifest['environment_fingerprint'] != environment_fingerprint([renderer_module,renderer_module.with_name('background_render.ps1'),*decoder_files()]):
-            raise ValidationError('字体或Office渲染环境已变化，须重新预览和制定计划')
+        from .presentation_renderer import render_environment
+        if manifest['environment_fingerprint'] != render_environment():
+            raise ValidationError('字体或WPS渲染环境已变化，须重新预览和制定计划')
     info = read_json(root / "_state/阶段5/inspection.json")
     images = manifest.get("images", [])
     if manifest.get("input_sha256") != task["input_sha256"] or len(images) != len(info["pages"]) or {i.get("page") for i in images} != {p["page"] for p in info["pages"]}:
@@ -373,7 +371,7 @@ def _require_previews(root: Path, task: dict[str, Any]) -> None:
 def merge_timing(source: Path, animated: Path, output: Path, pages: set[int]) -> None:
     source_parts, animated_parts = slide_parts(source), slide_parts(animated)
     if len(source_parts) != len(animated_parts):
-        raise ValidationError("PowerPoint changed slide count")
+        raise ValidationError("PPTX slide count changed")
     part_map = {source_parts[p - 1]: animated_parts[p - 1] for p in pages}
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(animated) as changed, zipfile.ZipFile(output, "w") as out:
         for info in original.infolist():
@@ -383,10 +381,10 @@ def merge_timing(source: Path, animated: Path, output: Path, pages: set[int]) ->
                 after = etree.fromstring(changed.read(part_map[info.filename]))
                 ids = lambda r: [n.get("id") for n in r.iter(f"{P}cNvPr")]
                 if ids(before) != ids(after):
-                    raise ValidationError("PowerPoint changed shape identities")
+                    raise ValidationError("PPTX shape identities changed")
                 timing = after.find(f"{P}timing")
                 if timing is None:
-                    raise ValidationError("PowerPoint did not save requested timing")
+                    raise ValidationError("PPTX does not contain the requested timing")
                 existing = before.find(f"{P}timing")
                 if existing is not None:
                     before.remove(existing)
@@ -630,9 +628,8 @@ def validate_background_review(root: Path, task: dict[str, Any], review: dict[st
         raise ValidationError("background render manifest changed or is unbound")
     manifest = read_json(manifest_path)
     if manifest.get('environment_fingerprint'):
-        from .render_cache import environment_fingerprint
-        renderer_module = Path(__file__).with_name('background_ppt.py')
-        if manifest['environment_fingerprint'] != environment_fingerprint([renderer_module,renderer_module.with_name('background_render.ps1')]):
+        from .presentation_renderer import render_environment
+        if manifest['environment_fingerprint'] != render_environment():
             raise ValidationError('后台状态渲染环境已变化，须重新导出和审阅')
     if manifest.get("profile") != PROFILE or manifest.get("foreground_opened") is not False or manifest.get("renderer") != RENDERER:
         raise ValidationError("unsupported or foreground renderer evidence")
@@ -706,7 +703,7 @@ def accept_background_review(run_dir: str | Path, review: dict[str, Any]) -> dic
     if task.get("font_repair_enabled"):
         write_json(root/"_state/阶段5/font_review.json",{**review,"method":"background_page_render","created_at":now_iso()})
         task["font_review_accepted"]=True
-        task["font_review_application"]="PowerPoint hidden Slide.Export (not actual slideshow or WPS)"
+        task["font_review_application"]="WPS Presentation native KWPP hidden Slide.Export (not actual slideshow)"
     _complete_reviews(state)
     if task.get('status') == 'completed' and task.get('reference_font_matching_enabled'):
         plan = read_json(root / task['plan'])

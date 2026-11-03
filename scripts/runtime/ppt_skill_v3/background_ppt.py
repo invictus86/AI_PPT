@@ -32,7 +32,7 @@ REL = '{http://schemas.openxmlformats.org/package/2006/relationships}'
 CT = '{http://schemas.openxmlformats.org/package/2006/content-types}'
 A = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
 PROFILE = 'ooxml_fade_v1'
-RENDERER = 'PowerPoint hidden Slide.Export + temporary embedded fonts'
+from .presentation_renderer import RENDERER
 
 
 def _parts(path):
@@ -291,7 +291,7 @@ def read_click_states(path):
 def extract_embedded_fonts(source,directory):
     """Validated EOT/MTX; original glyphs, no font installation or substitution."""
     from fontTools.ttLib import TTFont
-    paths=[];aliases={};suffix=uuid.uuid4().hex[:10]
+    paths=[];aliases={};manifest=[];suffix=uuid.uuid4().hex[:10]
     with zipfile.ZipFile(source) as z:
         pres=etree.fromstring(z.read('ppt/presentation.xml'))
         rels={x.get('Id'):x.get('Target') for x in etree.fromstring(z.read('ppt/_rels/presentation.xml.rels'))}
@@ -325,7 +325,9 @@ def extract_embedded_fonts(source,directory):
                     record.string=value.encode(record.getEncoding())
                 elif record.nameID in (2,17):record.string=style.encode(record.getEncoding())
             target=Path(directory)/('font_'+str(len(paths))+'.ttf');font.save(target);paths.append(str(target))
+            manifest.append({'file':target.name,'font':face,'variant':variant})
             font.close()
+    write_json(Path(directory)/'font_manifest.json',manifest)
     return paths,aliases
 
 
@@ -386,38 +388,47 @@ def audit_embedded_glyphs(source):
 
 def render_hidden(source, directory, *, timeout=600):
     from .resources import resource_slot, path_identity
-    from .render_cache import environment_fingerprint, valid_cache
+    from .render_cache import valid_cache
+    from .presentation_renderer import render_environment, select_presentation_renderer, proof_valid
+    from .pptx_font_preflight import audit_pptx_fonts
     source = Path(source).resolve(); directory = Path(directory).resolve()
     if not source.is_file() or source.suffix.lower() != '.pptx':
         raise ValidationError('后台渲染只接受真实PPTX')
-    from .verification_environment import verification_capability, skipped_verification
-    capability = verification_capability('pptx')
-    if not capability['available']:
-        return skipped_verification(source, capability)
-    from .embedded_fonts import decoder_files
-    renderer_files = [Path(__file__), Path(__file__).with_name('background_render.ps1'), *decoder_files()]
-    fingerprint = environment_fingerprint(renderer_files)
     cache_file = directory/'render_cache.json'
     with resource_slot('render-output:' + path_identity(directory)):
+        # Independent of WPS availability or rendering success. Keep real object/text pending records.
+        font_audit = audit_pptx_fonts(source)
+        write_json(directory/'font_character_preflight.json', font_audit)
+        from .verification_environment import verification_capability, skipped_verification
+        capability = verification_capability('pptx')
+        if not capability['available']:
+            result = skipped_verification(source, capability)
+            result['font_audit'] = font_audit
+            return result
+        selected = select_presentation_renderer()
+        fingerprint = render_environment()
         if cache_file.is_file():
             cached = read_json(cache_file)
             proof = cached.get('render_proof',{})
-            hidden = proof.get('with_window') is False and proof.get('windows_before') == proof.get('windows_during') and proof.get('slides_exported') == len(_parts(source))
+            hidden = proof_valid(proof, selected, len(_parts(source)), cached.get('embedded_fonts_loaded'))
             if hidden and cached.get('foreground_opened') is False and cached.get('renderer') == RENDERER and valid_cache(source,cached,fingerprint,expected_pages=len(_parts(source))):
                 return cached
         # Queue waiting is outside subprocess timeout. Existing PS mutex remains
         # the last barrier against old callers in this Windows login session.
         with resource_slot('office-background') as slot:
-            result = _render_hidden(source,directory,timeout=timeout)
-            if environment_fingerprint(renderer_files) != fingerprint:
-                raise ValidationError('渲染期间字体或Office环境变化，旧证据不能缓存')
+            result = _render_hidden(source,directory,timeout=timeout,selected=selected,font_audit=font_audit)
+            if render_environment() != fingerprint:
+                raise ValidationError('渲染期间字体或WPS环境变化，旧证据不能缓存')
             result.update(environment_fingerprint=fingerprint, queue_seconds=slot['queue_seconds'])
             write_json(cache_file,result)
             return result
 
 
-def _render_hidden(source, directory, *, timeout=600):
-    if os.name!='nt':raise ValidationError('当前后台渲染器需要Windows及PowerPoint；禁止前台备用路线')
+def _render_hidden(source, directory, *, timeout=600, selected=None, font_audit=None):
+    from .presentation_renderer import select_presentation_renderer, proof_valid
+    if os.name!='nt':raise ValidationError('当前后台渲染器需要Windows及WPS演示；禁止前台备用路线')
+    selected = selected or select_presentation_renderer()
+    if not selected:raise ValidationError('WPS原生后台环境已变化，请重新检测；不回退PowerPoint')
     shell=shutil.which('pwsh') or shutil.which('powershell')
     if not shell:raise ValidationError('缺少后台PowerShell渲染运行时')
     source=Path(source).resolve();directory=Path(directory).resolve()
@@ -425,31 +436,63 @@ def _render_hidden(source, directory, *, timeout=600):
         raise ValidationError('后台渲染只接受现有PPTX；不启用前台转换')
     directory.mkdir(parents=True,exist_ok=True)
     digest=file_sha256(source)
+    if font_audit is None:
+        from .pptx_font_preflight import audit_pptx_fonts
+        font_audit = audit_pptx_fonts(source)
+        write_json(directory/'font_character_preflight.json', font_audit)
     with tempfile.TemporaryDirectory(prefix='ppt_bg_fonts_') as tmp:
-        fonts,aliases=extract_embedded_fonts(source,tmp)
+        try:
+            fonts,aliases=extract_embedded_fonts(source,tmp)
+        except Exception as exc:
+            write_json(directory/'render_failure.json', {'status':'failed','phase':'embedded_font_preparation',
+                'input_sha256':digest,'reason':str(exc),'font_preflight':'font_character_preflight.json'})
+            raise
         render_source=Path(tmp)/'render_only.pptx'
         if aliases:prepare_font_render_copy(source,render_source,aliases)
         else:render_source=source
-        payload=Path(tmp)/'fonts.json';write_json(payload,fonts)
+        payload=Path(tmp)/'fonts.json';write_json(payload,{'fonts':fonts})
         evidence=Path(tmp)/'renderer_evidence.json'
         try:
             result=subprocess.run([shell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(Path(__file__).with_name('background_render.ps1')),
-                '-InputPptx',str(render_source),'-OutputDir',str(directory),'-FontsJson',str(payload),'-EvidenceJson',str(evidence)],
+                '-InputPptx',str(render_source),'-OutputDir',str(directory),'-FontsJson',str(payload),'-EvidenceJson',str(evidence),
+                '-ExpectedExecutable',selected['executable']],
                 capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=timeout,
                 creationflags=subprocess.CREATE_NO_WINDOW)
         except subprocess.TimeoutExpired as exc:
             from .resources import mark_office_uncertain
             mark_office_uncertain(directory)
             # Only the uniquely named temporary faces owned by this render.
-            # Never terminate PowerPoint or touch another user's presentation.
+            # Never terminate WPS or touch another user's presentation.
             import ctypes
             remove=ctypes.windll.gdi32.RemoveFontResourceExW
+            remove.argtypes=[ctypes.c_wchar_p,ctypes.c_uint,ctypes.c_void_p]
             for font in fonts:remove(str(font),0,None)
+            write_json(directory/'render_failure.json', {'status':'failed','phase':'timeout',
+                'input_sha256':digest,'reason':'worker_timeout_cleanup_uncertain','font_preflight':'font_character_preflight.json'})
             raise ValidationError('后台渲染超时，已阻断；不会转为前台检查') from exc
-        if result.returncode:raise ValidationError('后台渲染失败，未启用前台备用: '+(result.stderr or result.stdout)[-2500:])
-        proof=json.loads(evidence.read_text(encoding='utf-8-sig'))
-        if proof.get('with_window') is not False or proof.get('windows_before')!=proof.get('windows_during') or proof.get('slides_exported')!=len(_parts(source)):
-            raise ValidationError('后台渲染窗口或全量导出证据不一致')
+        proof=json.loads(evidence.read_text(encoding='utf-8-sig')) if evidence.is_file() else {}
+        write_json(directory/'renderer_evidence.json',proof)
+        if proof.get('cleanup_complete') is not True:
+            from .resources import mark_office_uncertain
+            mark_office_uncertain(directory)
+        if result.returncode:
+            reason=(result.stderr or result.stdout)[-2500:]
+            failed_font = proof.get('failed_font_file')
+            prepared_path = Path(tmp)/'font_manifest.json'
+            prepared = read_json(prepared_path) if prepared_path.is_file() else []
+            failed = next((r for r in prepared if r['file']==failed_font),None)
+            if failed:
+                affected = [o for o in font_audit.get('objects',[]) if any(
+                    (r.get('font') or '').casefold()==failed['font'].casefold() for r in o['runs'])]
+                write_json(directory/'font_runtime_issues.json', {'status':'unresolved',
+                    'input_sha256':digest,'font':failed['font'],'variant':failed['variant'],
+                    'reason':'Windows GDI rejected temporary font; character coverage is a separate check',
+                    'objects':affected,'visual_verified':False})
+            write_json(directory/'render_failure.json', {'status':'failed','phase':'background_worker',
+                'input_sha256':digest,'reason':reason,'render_proof':proof,'font_preflight':'font_character_preflight.json'})
+            raise ValidationError('后台渲染失败，未启用前台备用: '+reason)
+        if not proof_valid(proof,selected,len(_parts(source)),len(fonts)):
+            raise ValidationError('WPS后台渲染应用、隐藏只读、字体清理或全量导出证据不一致')
     if file_sha256(source)!=digest:raise ValidationError('后台渲染期间输入发生变化')
     from PIL import Image
     images=[]
@@ -461,8 +504,9 @@ def _render_hidden(source, directory, *, timeout=600):
             im.verify()
         images.append({'page':n,'path':str(path),'sha256':file_sha256(path)})
     return {'input_sha256':digest,'renderer':RENDERER,'foreground_opened':False,'embedded_fonts_loaded':len(fonts),
-        'font_audit':audit_embedded_glyphs(source),'font_aliases_use_original_glyphs':True,'render_proof':proof,
-        'images':images,'created_at':now_iso()}
+        'font_audit':font_audit,'font_aliases_use_original_glyphs':True,'render_proof':proof,
+        'images':images,'created_at':now_iso(),'visual_verified':False,
+        'verification_scope':'background_page_export_only_not_visual_or_slideshow_acceptance'}
 
 
 def render_source_hidden(source, directory, *, force_font_fallback=False):
@@ -471,17 +515,40 @@ def render_source_hidden(source, directory, *, force_font_fallback=False):
         return _render_source_hidden(source, directory, force_font_fallback=force_font_fallback)
 
 
-def _render_source_hidden(source, directory, *, force_font_fallback=False):
+def _render_source_hidden(source, directory, *, force_font_fallback=False, _fallback_faces=()):
     """Content-reading entry; never used for animation or final visual acceptance."""
     from .source_font_inspection import prepare_source_copy
     source=Path(source).resolve(); directory=Path(directory).resolve()
-    copy, report=prepare_source_copy(source, directory/'_font_recovery', force_fallback=force_font_fallback)
+    from .presentation_renderer import render_environment, proof_valid, select_presentation_renderer
+    from .render_cache import valid_cache
+    previous = directory/'source_render_manifest.json'
+    if previous.is_file():
+        cached = read_json(previous)
+        recovery = cached.get('source_font_recovery',{})
+        copy_path = Path(recovery.get('copy_path','__missing__'))
+        preflight_path = directory/'source_font_character_preflight.json'
+        if (recovery.get('forced_fallback') == force_font_fallback
+                and (not _fallback_faces or recovery.get('requested_fallback_faces') == sorted(_fallback_faces))
+                and copy_path.is_file() and file_sha256(copy_path) == recovery.get('copy_sha256')
+                and preflight_path.is_file() and file_sha256(preflight_path) == cached.get('source_font_preflight_sha256')
+                and cached.get('foreground_opened') is False
+                and cached.get('renderer') == RENDERER
+                and proof_valid(cached.get('render_proof',{}),select_presentation_renderer(),len(_parts(source)),cached.get('embedded_fonts_loaded'))
+                and valid_cache(source,cached,render_environment(),expected_pages=len(_parts(source)))):
+            return cached
+    from .pptx_font_preflight import audit_pptx_fonts
+    write_json(directory/'source_font_character_preflight.json',audit_pptx_fonts(source))
+    copy, report=prepare_source_copy(source, directory/'_font_recovery', force_fallback=force_font_fallback,
+                                    fallback_faces=_fallback_faces)
     try:
         result=dict(render_hidden(copy,directory))
     except ValidationError as exc:
-        if 'Temporary embedded font registration failed' in str(exc) and not force_font_fallback:
+        if 'Temporary embedded font registration failed' in str(exc) and not force_font_fallback and not _fallback_faces:
             write_json(directory/'_font_recovery/first_render_failure.json', {'reason': str(exc)})
-            return _render_source_hidden(source, directory, force_font_fallback=True)
+            issues_path = directory/'font_runtime_issues.json'
+            failed_face = read_json(issues_path).get('font') if issues_path.is_file() else None
+            return _render_source_hidden(source, directory, force_font_fallback=not bool(failed_face),
+                                         _fallback_faces=(failed_face,) if failed_face else ())
         report.update(render_status='failed', render_failure=str(exc))
         write_json(directory/'_font_recovery/font_recovery.json',report)
         raise
@@ -490,7 +557,11 @@ def _render_source_hidden(source, directory, *, force_font_fallback=False):
                   render_proof=result.get('render_proof'))
     write_json(directory/'_font_recovery/font_recovery.json',report)
     result.update(input_sha256=report['source_sha256'], source_font_recovery=report,
-                  original_font_appearance_verified=False, complete_content_review=False)
+                  original_font_appearance_verified=False, complete_content_review=False,
+                  source_font_preflight_sha256=file_sha256(directory/'source_font_character_preflight.json'))
+    runtime_issues_path = directory/'font_runtime_issues.json'
+    if runtime_issues_path.is_file():
+        result['source_font_runtime_issues'] = read_json(runtime_issues_path)
     if report['content_only']:
         result.update(verified=False, verification_scope='content_inspection_only')
     if file_sha256(source)!=report['source_sha256']:

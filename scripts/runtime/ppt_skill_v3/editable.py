@@ -326,11 +326,12 @@ def review(run_dir, document, *, persist=True, _task=None):
     if document.get('manifest_sha256')!=file_sha256(manifest_path) or manifest['input_sha256']!=task['output_sha256']:
         raise ValidationError('Editable output preview changed')
     from .background_ppt import RENDERER
+    from .presentation_renderer import render_environment, proof_valid, select_presentation_renderer
     proof=manifest.get('render_proof',{})
     if (manifest.get('renderer')!=RENDERER or manifest.get('foreground_opened') is not False or
-            proof.get('with_window') is not False or type(proof.get('windows_before')) is not int or
-            proof.get('windows_before')!=proof.get('windows_during') or
-            proof.get('slides_exported')!=len(manifest.get('images',[])) or not manifest.get('images')):
+            manifest.get('environment_fingerprint')!=render_environment() or
+            not proof_valid(proof,select_presentation_renderer(),len(manifest.get('images',[])),manifest.get('embedded_fonts_loaded')) or
+            not manifest.get('images')):
         raise ValidationError('Actual hidden-rendered editable output pages are required')
     if file_sha256(task['input'])!=task['input_sha256'] or file_sha256(task['output'])!=task['output_sha256'] or file_sha256(root/task['plan'])!=task['plan_sha256']:
         raise ValidationError('Editable source/output/plan changed')
