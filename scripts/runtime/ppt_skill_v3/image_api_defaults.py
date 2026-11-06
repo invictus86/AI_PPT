@@ -13,7 +13,7 @@ DEFAULT_IMAGE_API_GENERATION_ENDPOINT = "/v1/images/generations"
 DEFAULT_IMAGE_API_EDITS_ENDPOINT = "/v1/images/edits"
 LEGACY_GRSAI_DRAW_COMPLETIONS_ENDPOINT = "/v1/draw/completions"
 
-REQUIRED_IMAGE_API_MODEL = "gpt-image-2.5"
+REQUIRED_IMAGE_API_MODEL = "gpt-image-2.6"
 DEFAULT_IMAGE_API_MODEL = REQUIRED_IMAGE_API_MODEL
 DEFAULT_IMAGE_API_SIZE = DEFAULT_PPT_IMAGE_SIZE_16_9
 DEFAULT_IMAGE_API_QUALITY = "high"
@@ -41,6 +41,6 @@ SUPPORTED_IMAGE_API_ENDPOINTS = {
 def require_image_api_model(model: object) -> None:
     if model != REQUIRED_IMAGE_API_MODEL:
         raise ValidationError(
-            "正式生图只允许使用 gpt-image-2.5；禁止其他模型或分组。"
+            "正式生图只允许使用 gpt-image-2.6；禁止其他模型或分组。"
             "中转分组不可用时只能按生图备用协议交接GPT原生工具，不得改用其他中转模型或分组。"
         )

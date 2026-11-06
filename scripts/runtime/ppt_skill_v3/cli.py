@@ -355,7 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--batch")
     source.add_argument("--stage", choices=["cover-options", "stage2-trial-first5", "stage2-remaining", "stage2"])
     run_image_api_parser.add_argument("--base-url")
-    run_image_api_parser.add_argument("--model", choices=["gpt-image-2.5"], help="固定只允许 gpt-image-2.5；不可用时停止，不切换其他分组。")
+    run_image_api_parser.add_argument("--model", choices=["gpt-image-2.6"], help="固定只允许 gpt-image-2.6；不可用时停止，不切换其他分组。")
     run_image_api_parser.add_argument("--size")
     run_image_api_parser.add_argument("--quality")
     run_image_api_parser.add_argument("--response-format")
