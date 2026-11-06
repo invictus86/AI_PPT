@@ -18,6 +18,7 @@ from .image_deck import build_image_deck
 from .image_api import configure_image_api_key, default_batch_path_for_stage, image_api_key_status, load_image_api_config, run_image_api_batch
 from .image_packets import dispatch_image_api_packets, dispatch_image_generation_packets
 from .image_results import record_image_result
+from .image_resolution import RESOLUTIONS, configure_image_resolution, image_resolution_status, image_resolution_menu
 from .image_preferences import MODES, configure_image_generation, image_generation_status, image_generation_menu, resolve_image_generation
 from .installation import inspect_installation, install_profile
 from .json_io import read_json, write_json
@@ -318,6 +319,10 @@ def build_parser() -> argparse.ArgumentParser:
     mode_status = subparsers.add_parser("image-generation-status", help="查看后续新批次的生图模式，不请求生图。")
     mode_status.add_argument("--run-dir")
     subparsers.add_parser("image-generation-menu", help="交互切换本机默认生图模式。")
+    resolution_parser = subparsers.add_parser("configure-image-resolution", help="切换本机后续生图分辨率，其余参数不变。")
+    resolution_parser.add_argument("--resolution", required=True, type=str.lower, choices=list(RESOLUTIONS))
+    subparsers.add_parser("image-resolution-status", help="查看当前生图分辨率，不请求生图。")
+    subparsers.add_parser("image-resolution-menu", help="交互切换 1K / 2K / 4K 生图分辨率。")
     cover_options_parser = subparsers.add_parser("dispatch-cover-options", help="Create four parallel cover style image generation packets.")
     cover_options_parser.add_argument("--run-dir", required=True)
     cover_options_parser.add_argument("--route", choices=["codex-image-gen", "codex_image_gen", "image-gen", "image_gen", "openai-image-api", "openai_image_api", "direct-api", "direct_api", "cangyuan", "cangyuan-api", "cangyuan_api", "grsai", "grsai-api", "grsai_api"], default=None)
@@ -463,7 +468,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
-    if args.command == "image-generation-status":
+    if args.command in {"image-generation-status", "image-resolution-status"}:
         return _execute(args, parser)
     from contextlib import ExitStack
     from .resources import project_lock
@@ -516,6 +521,14 @@ def _execute(args, parser):
         return 0
     if args.command == "image-generation-menu":
         return image_generation_menu()
+    if args.command == "configure-image-resolution":
+        print(json.dumps(configure_image_resolution(args.resolution), ensure_ascii=False))
+        return 0
+    if args.command == "image-resolution-status":
+        print(json.dumps(image_resolution_status(), ensure_ascii=False))
+        return 0
+    if args.command == "image-resolution-menu":
+        return image_resolution_menu()
     if args.command == 'list-font-candidates':
         from .font_candidates import common_font_candidates
         print(json.dumps(common_font_candidates(Path(args.text_file).read_text(encoding='utf-8')), ensure_ascii=False))

@@ -88,18 +88,23 @@ def route_tool_function(route: str, *, edit: bool = False) -> str:
     return OPENAI_IMAGE_API_EDIT_FUNCTION if edit else OPENAI_IMAGE_API_GENERATE_FUNCTION
 
 
-def image_size_contract() -> dict[str, Any]:
+def image_size_contract(size: str = DEFAULT_PPT_IMAGE_SIZE_16_9) -> dict[str, Any]:
+    from .canonical_images import parse_size
+    from .image_geometry import is_16_9
+    width, height = parse_size(size)
+    if not is_16_9(width, height):
+        raise ValidationError("生图目标尺寸必须保持16:9比例容差")
     return {
-        "target_size": DEFAULT_PPT_IMAGE_SIZE_16_9,
-        "target_width_px": DEFAULT_PPT_IMAGE_WIDTH_PX,
-        "target_height_px": DEFAULT_PPT_IMAGE_HEIGHT_PX,
+        "target_size": size,
+        "target_width_px": width,
+        "target_height_px": height,
         "preferred_minimum_size": {
             "width_px": PREFERRED_PPT_IMAGE_WIDTH_PX,
             "height_px": PREFERRED_PPT_IMAGE_HEIGHT_PX,
         },
         "target_size_tolerance_px": {
-            "width_px": DEFAULT_PPT_IMAGE_WIDTH_TOLERANCE_PX,
-            "height_px": DEFAULT_PPT_IMAGE_HEIGHT_TOLERANCE_PX,
+            "width_px": max(TARGET_SIZE_TOLERANCE_MIN_PX, round(width * TARGET_SIZE_TOLERANCE_RATIO)),
+            "height_px": max(TARGET_SIZE_TOLERANCE_MIN_PX, round(height * TARGET_SIZE_TOLERANCE_RATIO)),
         },
         "size_policy": IMAGE_SIZE_POLICY_PRESERVE_GENERATED_RASTER,
         "postprocess_policy": IMAGE_POSTPROCESS_POLICY_NO_DOWNSCALE,

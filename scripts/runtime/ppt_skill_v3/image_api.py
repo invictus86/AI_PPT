@@ -42,6 +42,7 @@ from .image_api_defaults import (
     require_image_api_model,
 )
 from .image_results import record_image_result
+from .image_resolution import resolve_image_resolution
 from .image_routes import IMAGE_ROUTE_OPENAI_IMAGE_API, normalize_image_generation_route
 from .json_io import read_json, write_json
 from .image_prompt_docs import require_current_image_style, record_prompt_document, prepare_image_request
@@ -135,7 +136,7 @@ def load_image_api_config(
         api_key=key,
         base_url=(base_url or os.environ.get(DEFAULT_IMAGE_API_BASE_URL_ENV) or DEFAULT_IMAGE_API_BASE_URL).rstrip("/") + "/",
         model=model or env_model or DEFAULT_IMAGE_API_MODEL,
-        size=size or env_size or DEFAULT_IMAGE_API_SIZE,
+        size=size or env_size or resolve_image_resolution()["size"],
         quality=quality or env_quality or DEFAULT_IMAGE_API_QUALITY,
         response_format=response_format or env_response_format or DEFAULT_IMAGE_API_RESPONSE_FORMAT,
         max_parallel=resolved_parallel,

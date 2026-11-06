@@ -34,6 +34,7 @@ from .image_routes import (
 )
 from .json_io import read_json, write_json
 from .image_preferences import resolve_image_generation
+from .image_resolution import resolve_image_resolution
 from .image_prompt_docs import apply_image_style, refresh_prompt_delivery
 from .image_style import image_style_snapshot, result_is_current
 from .planning_assets import (
@@ -194,6 +195,7 @@ def dispatch_stage2_trial_first5_packets(
     state["next_required_action"] = _next_action_for_route(
         generation_route,
         f"阶段2B试样（总共 {sample_count} 页，含封面，复杂页在名额内替换{reused_text}）",
+        target_size=read_json(packet_paths[0])["target_size"],
     )
     write_state(root, state)
     append_event(
@@ -248,7 +250,7 @@ def dispatch_stage2_remaining_packets(
 
     state["status"] = "waiting_for_stage2_remaining_image_results"
     state["required_actor"] = "main_controller"
-    state["next_required_action"] = _next_action_for_route(generation_route, "剩余页面，并逐页记录正式 full_slide 结果")
+    state["next_required_action"] = _next_action_for_route(generation_route, "剩余页面，并逐页记录正式 full_slide 结果", target_size=read_json(packet_paths[0])["target_size"])
     write_state(root, state)
     append_event(
         root,
@@ -516,6 +518,7 @@ def _dispatch_stage2_subset(
     selection: dict[str, Any] | None = None,
 ) -> list[Path]:
     generation_route = normalize_image_generation_route(route)
+    size_contract = image_size_contract(resolve_image_resolution()["size"])
     total_packets = len(slide_indices)
     if total_packets < 1:
         raise ValidationError("stage2 packet dispatch requires at least one slide")
@@ -558,12 +561,12 @@ def _dispatch_stage2_subset(
             "asset_hashes": assets["asset_hashes"],
             "layout_safety_contract": str(layout_safety_contract_path(root).relative_to(root)),
             "layout_safety_contract_hash": layout_safety_contract_hash(root),
-            **image_size_contract(),
+            **size_contract,
             "formal_mode": True,
             "created_at": now_iso(),
             "expected_output_relpath": expected_output(slide_index),
         }
-        packet.update(_route_input(generation_route))
+        packet.update(_route_input(generation_route, size_contract=size_contract))
         if purpose == TRIAL_FIRST5_PURPOSE and trial_selection is not None:
             packet["trial_selection"] = trial_selection(slide_index)
         if purpose == "full_slide":
@@ -590,16 +593,17 @@ def _routed_group_id(group_id: str, route: str) -> str:
     return group_id + "-image-gen"
 
 
-def _route_input(route: str) -> dict[str, Any]:
+def _route_input(route: str, *, size_contract: dict[str, Any] | None = None) -> dict[str, Any]:
     normalized = normalize_image_generation_route(route)
-    size_contract = image_size_contract()
+    if size_contract is None:
+        size_contract = image_size_contract(resolve_image_resolution()["size"])
     if normalized == IMAGE_ROUTE_OPENAI_IMAGE_API:
         return {
             "image_api_input": {
                 "endpoint": DEFAULT_IMAGE_API_GENERATION_ENDPOINT,
                 "model": DEFAULT_IMAGE_API_MODEL,
-                "size": DEFAULT_IMAGE_API_SIZE,
-                "aspectRatio": DEFAULT_IMAGE_API_SIZE,
+                "size": size_contract["target_size"],
+                "aspectRatio": size_contract["target_size"],
                 "quality": DEFAULT_IMAGE_API_QUALITY,
                 "n": 1,
                 "output_format": DEFAULT_IMAGE_API_OUTPUT_FORMAT,
@@ -612,7 +616,7 @@ def _route_input(route: str) -> dict[str, Any]:
             "image_gen_input": {
                 "mode": "generate",
                 "tool": "image_gen.imagegen",
-                "size": DEFAULT_IMAGE_GEN_SIZE,
+                "size": size_contract["target_size"],
                 "quality": DEFAULT_IMAGE_GEN_QUALITY,
                 "output_format": "png",
                 "project_bound": True,
@@ -624,12 +628,13 @@ def _route_input(route: str) -> dict[str, Any]:
     raise ValidationError(f"unsupported image generation route: {route}")
 
 
-def _next_action_for_route(route: str, description: str) -> str:
+def _next_action_for_route(route: str, description: str, *, target_size: str | None = None) -> str:
+    target_size = target_size or resolve_image_resolution()["size"]
     normalized = normalize_image_generation_route(route)
     if normalized == IMAGE_ROUTE_OPENAI_IMAGE_API:
-        return f"运行图片 API 批量执行器生成{description}，优先目标 {DEFAULT_PPT_IMAGE_SIZE_16_9}，允许生成器返回存在轻微尺寸差异；尽量保留生成原始尺寸，并逐页记录 API evidence、batch、尺寸和图片 sha"
+        return f"运行图片 API 批量执行器生成{description}，优先目标 {target_size}，允许生成器返回存在轻微尺寸差异；尽量保留生成原始尺寸，并逐页记录 API evidence、batch、尺寸和图片 sha"
     if normalized == IMAGE_ROUTE_CODEX_IMAGE_GEN:
-        return f"调用 Codex 内置 image_gen 工具生成{description}，优先目标 {DEFAULT_PPT_IMAGE_SIZE_16_9}，允许生成器返回存在轻微尺寸差异；尽量保留生成原始尺寸，把输出复制到项目目录，并逐页记录 image_gen evidence、batch、尺寸和图片 sha"
+        return f"调用 Codex 内置 image_gen 工具生成{description}，优先目标 {target_size}，允许生成器返回存在轻微尺寸差异；尽量保留生成原始尺寸，把输出复制到项目目录，并逐页记录 image_gen evidence、batch、尺寸和图片 sha"
     raise ValidationError(f"unsupported image generation route: {route}")
 
 
